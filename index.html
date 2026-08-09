@@ -48,6 +48,7 @@
   <link rel="modulepreload" href="js/geo.js" />
   <link rel="modulepreload" href="js/store.js" />
   <link rel="modulepreload" href="js/map-engine.js" />
+  <link rel="modulepreload" href="js/search.js" />
 
   <!-- Leaflet is injected by map-engine at runtime; preload it so the tile
        map (the LCP element) doesn't wait a full extra hop to be discovered.
@@ -96,6 +97,12 @@
       <span class="count" id="live-count">finding events…</span>
     </div>
     <div class="actions">
+      <button class="icon-btn" id="search-btn" aria-label="Search for a place" title="Search places" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="M15.8 15.8 L21 21" />
+        </svg>
+      </button>
       <button class="icon-btn" id="theme-btn" aria-label="Switch theme" title="Switch theme">
         <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="12" cy="12" r="4.2" />
@@ -120,6 +127,14 @@
       </button>
     </div>
   </header>
+
+  <!-- Place search: geocoded by Photon (OpenStreetMap data), worldwide -->
+  <div class="search-panel" id="search-panel" hidden>
+    <input id="search-input" type="search" placeholder="Search a place — city, area, landmark…"
+           autocomplete="off" spellcheck="false" aria-label="Search for a place"
+           role="combobox" aria-expanded="false" aria-controls="search-results" />
+    <ul id="search-results" role="listbox" aria-label="Search results" hidden></ul>
+  </div>
 
   <button class="fab" id="fab" aria-label="Start a new event">
     <span class="plus" aria-hidden="true">＋</span><span class="label">Start something</span>
@@ -181,6 +196,7 @@
             <span id="detail-joins"></span>
             <span id="detail-ends"></span>
           </div>
+          <a id="detail-place" target="_blank" rel="noopener"></a>
           <p class="mine-tag" id="detail-mine" hidden>Your event</p>
         </div>
       </div>
@@ -191,7 +207,10 @@
         <button id="join-btn">Join</button>
         <button class="ghost-btn" id="share-btn" aria-label="Share event">Share</button>
       </div>
-      <p class="report"><button id="report-btn">Report this event</button></p>
+      <p class="report">
+        <button id="report-btn">Report this event</button>
+        <button id="remove-btn" hidden>Remove this event</button>
+      </p>
     </div>
   </section>
 

@@ -6,10 +6,14 @@ join. The pin grows as more people join. When the event's time runs out (max
 1 week), it disappears forever.
 
 - **Frontend-only.** Static files + Firestore. Hosted on Vercel.
-- **No accounts.** Joining is an anonymous counter.
+- **No accounts.** Joining is an anonymous counter. Creators can remove their
+  own events early — ownership rides on invisible Firebase *anonymous* auth
+  (no sign-up, no UI), verified server-side by the rules.
 - **Abuse-proof names.** Event names are composed from a fixed word list
   ([js/words.js](js/words.js)) and stored as integer indices — free text can
   never enter the database. Security rules enforce this server-side.
+- **Place search.** Jump anywhere with the header search (geocoding by
+  [Photon](https://photon.komoot.io), keyless, OpenStreetMap data, worldwide).
 
 ## Run it right now (demo mode)
 
@@ -90,7 +94,13 @@ site, Firebase stores the data.
    (Free feature. Deletion happens within ~24h of expiry; the app already
    hides expired events instantly, so users never see them.)
 
-6. **Hosting** is handled by Vercel (see the Vercel section above). You do not
+6. **Enable Anonymous sign-in** so creators can remove their own events:
+   Build → Authentication → Get started → Sign-in method → **Anonymous** →
+   Enable. (Free, invisible to users — it only mints a per-browser uid that
+   the rules check on delete. If you skip this, everything still works;
+   events just can't be removed before they expire.)
+
+7. **Hosting** is handled by Vercel (see the Vercel section above). You do not
    need Firebase Hosting — `firebase.json` is kept only for the Firestore
    rules/index deploy in step 4.
 
@@ -121,7 +131,7 @@ line and replace the file — nothing else changes.
 | --- | --- |
 | Offensive / illegal event names | Names are indices into a fixed word list; rules reject anything else. No free text exists anywhere in the system. |
 | Malformed join writes | Rules only allow `joins` to increase by exactly 1 per write, nothing else may change. (This stops *tampering*, not *inflation* — see residual risks below.) |
-| Deleting other people's events | Deletes are denied for everyone; only Firestore TTL removes documents. |
+| Deleting other people's events | An event may only be deleted by its creator: at creation the anonymous-auth uid is written to a **never-readable** `events/{id}/priv/owner` subdocument (atomically, same batch), and the delete rule compares it against the caller's signed token. The uid is deliberately kept **off** the public event doc so scrapers can't link one person's events into a movement profile. Events created without auth can't be deleted by anyone; TTL remains the only other remover. (TTL-expired events leave an inert, unreadable priv doc behind — harmless and tiny.) |
 | Events that never expire | Rules require `expiresAt` within 7 days of creation; TTL erases them after expiry. |
 | Junk documents / extra fields | Rules require the exact field set with the exact types, `joins = 0`, and server-time `created`. |
 

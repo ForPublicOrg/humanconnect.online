@@ -582,13 +582,91 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   font-weight: 600;
 }
 
-.report { margin: 14px 0 2px; text-align: center; }
-#report-btn {
+.report { margin: 14px 0 2px; text-align: center; display: flex; justify-content: center; gap: 18px; }
+#report-btn, #remove-btn {
   font-size: 12.5px;
   color: var(--ink-soft);
   text-decoration: underline;
   padding: 6px;
 }
+/* Removal is destructive — quiet, but unmistakably so. */
+#remove-btn { color: #b3564b; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #remove-btn { color: #e08a80; }
+}
+:root[data-theme="dark"] #remove-btn { color: #e08a80; }
+:root[data-theme="light"] #remove-btn { color: #b3564b; }
+
+/* Address line in the detail sheet — links out to Google Maps */
+#detail-place {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+#detail-place:hover { color: var(--ink); text-decoration: underline; }
+#detail-place:empty { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Place search
+--------------------------------------------------------------------------- */
+.search-panel {
+  position: fixed;
+  top: calc(72px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 24px));
+  z-index: 995; /* above banners, below sheets */
+}
+#search-input {
+  width: 100%;
+  padding: 11px 14px;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  outline: none;
+}
+#search-input:focus { border-color: var(--accent-deep); }
+#search-input::placeholder { color: var(--ink-soft); }
+#search-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  max-height: min(46vh, 330px);
+  overflow-y: auto;
+}
+#search-results li.note {
+  padding: 12px 10px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+#search-results button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 14px;
+}
+#search-results button strong { font-weight: 600; }
+#search-results button span {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 1px;
+}
+#search-results button:hover,
+#search-results li.active button { background: var(--paper-2); }
 
 /* ---------------------------------------------------------------------------
    Toasts, banner, onboarding

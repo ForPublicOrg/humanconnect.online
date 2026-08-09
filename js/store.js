@@ -59,8 +59,8 @@ async function createFirestoreStore(onEvents) {
   ]);
   const {
     getFirestore, collection, query, where, orderBy, limit,
-    onSnapshot, getDoc, addDoc, updateDoc, doc, increment,
-    serverTimestamp, Timestamp,
+    onSnapshot, getDoc, updateDoc, doc, increment,
+    writeBatch, serverTimestamp, Timestamp,
   } = fs;
 
   const app = initializeApp(firebaseConfig);
@@ -98,6 +98,27 @@ async function createFirestoreStore(onEvents) {
       'in js/config.js and enable enforcement before relying on this in production.',
     );
   }
+
+  // Anonymous auth: gives this browser a signed uid so events can carry an
+  // `owner` and the rules can allow owner-only deletes. Best effort, exactly
+  // like App Check — if it can't load or the provider is disabled, events are
+  // simply created without an owner (they work fully, just can't be removed
+  // early; TTL still expires them). Never let auth failure break the app.
+  let uid = null;
+  const authReady = (async () => {
+    try {
+      const { getAuth, signInAnonymously } = await import(`${CDN}/firebase-auth.js`);
+      const cred = await signInAnonymously(getAuth(app));
+      uid = cred.user.uid;
+      return uid;
+    } catch (err) {
+      console.warn(
+        '[humanconnect] Anonymous auth unavailable — events created in this ' +
+        'browser cannot be removed before they expire.', err,
+      );
+      return null;
+    }
+  })();
 
   const db = getFirestore(app);
   const events = collection(db, 'events');
@@ -190,18 +211,38 @@ async function createFirestoreStore(onEvents) {
       }
     },
     async create({ a, b, c, lat, lng, durationMs }) {
-      const ref = await addDoc(events, {
+      // Wait for the uid (fast after first sign-in; null if auth is blocked).
+      const owner = await authReady;
+      const evRef = doc(events); // auto-id
+      const batch = writeBatch(db);
+      batch.set(evRef, {
         a, b, c, lat, lng,
         g4: geohash4(lat, lng),
         joins: 0,
         created: serverTimestamp(),
         expiresAt: Timestamp.fromMillis(Date.now() + durationMs),
       });
-      return ref.id;
+      // Ownership lives in a NEVER-READABLE subdoc — the public event doc
+      // must not carry the uid, or every scraper could link all of one
+      // person's events into a movement profile. Written atomically with the
+      // event; the rules only accept it inside this same batch.
+      if (owner) batch.set(doc(db, 'events', evRef.id, 'priv', 'owner'), { uid: owner });
+      await batch.commit();
+      return evRef.id;
     },
     async join(id) {
       await updateDoc(doc(db, 'events', id), { joins: increment(1) });
     },
+    // Owner-only: the delete rule checks priv/owner against the signed uid,
+    // so this succeeds only in the browser that created the event.
+    async remove(id) {
+      await authReady;
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'events', id));
+      batch.delete(doc(db, 'events', id, 'priv', 'owner'));
+      await batch.commit();
+    },
+    get uid() { return uid; },
   };
 }
 
@@ -256,11 +297,23 @@ function createDemoStore(onEvents, seedCenter) {
       return id;
     },
     async join(id) {
+      let found = false;
       mutate((list) => {
         const ev = list.find((e) => e.id === id);
-        if (ev) ev.joins += 1;
+        if (ev) { ev.joins += 1; found = true; }
+      });
+      // Joining a removed/expired event must FAIL so the UI's optimistic
+      // "You're in ✓" rolls back instead of persisting against nothing.
+      if (!found) { const err = new Error('event gone'); err.code = 'not-found'; throw err; }
+    },
+    // Demo has no server identity — the UI's own "mine" tracking is the gate.
+    async remove(id) {
+      mutate((list) => {
+        const i = list.findIndex((e) => e.id === id);
+        if (i !== -1) list.splice(i, 1);
       });
     },
+    uid: null,
   };
 }
 

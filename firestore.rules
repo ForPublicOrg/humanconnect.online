@@ -21,7 +21,36 @@ service cloud.firestore {
       allow read: if true;
       allow create: if validNewEvent();
       allow update: if joinOnly();
-      allow delete: if false;
+      // Owner-only removal. The creator's anonymous-auth uid lives in the
+      // NEVER-READABLE events/{id}/priv/owner subdocument (event docs are
+      // world-readable, so putting the uid on the event itself would hand
+      // every scraper a stable pseudonym linking all of one person's events
+      // — home/work inference, harassment of repeat organisers). The get()
+      // costs one read, only on delete.
+      allow delete: if request.auth != null
+        && exists(/databases/$(database)/documents/events/$(eventId)/priv/owner)
+        && get(/databases/$(database)/documents/events/$(eventId)/priv/owner).data.uid == request.auth.uid;
+    }
+
+    // Private per-event metadata. Readable by NOBODY (not even the owner —
+    // the client never needs to read it back); only consulted server-side by
+    // the delete rule above.
+    match /events/{eventId}/priv/{docId} {
+      allow read: if false;
+      // Creatable only as 'owner', only with the caller's real signed uid,
+      // and only in the SAME batched write that creates the event itself
+      // (getAfter sees the batch's end-state; created == request.time only
+      // when the parent event is being created right now). Nobody can attach
+      // an owner doc to an existing event and steal deletion rights.
+      allow create: if docId == 'owner'
+        && request.auth != null
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid is string
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/events/$(eventId)).data.created == request.time;
+      allow update: if false;
+      // Deleted alongside the event by the owner's batched remove.
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
     // Everything not explicitly matched above is denied.

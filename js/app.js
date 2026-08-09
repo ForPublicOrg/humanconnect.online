@@ -13,6 +13,7 @@ import { createStore } from './store.js';
 import { buildMap } from './map-engine.js';
 import { cellsForBounds } from './geo.js';
 import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js';
+import { initSearch, reverseGeocode } from './search.js';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -54,6 +55,8 @@ const { map, clusters } = await buildMap('map', seedCenter);
 const markerLayer = clusters ?? map;
 
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+const search = initSearch({ map });
 
 // Tell the store which geohash cells the viewport covers (debounced) so we
 // only subscribe to nearby events; null = nationwide fallback.
@@ -192,12 +195,14 @@ function renderEvents(list) {
     detailCache = events.get(detailId);
     fillDetail(detailCache);
   } else if (detailId) {
-    // Missing from the current subscription. Only call it "ended" if its
+    // Missing from the current subscription. In DEMO mode the list is always
+    // the complete dataset (no viewport scoping), so absence is authoritative
+    // — the event was removed. In live mode, only call it "ended" if its
     // clock actually ran out — otherwise the user just panned away from a
     // viewport-scoped area and we keep showing the cached details.
-    if (!detailCache || detailCache.expiresAt <= Date.now()) {
+    if (store.mode === 'demo' || !detailCache || detailCache.expiresAt <= Date.now()) {
       hideSheet($('#detail-sheet'));
-      toast('This event has ended');
+      toast('This event is gone');
       detailId = null;
       detailCache = null;
     }
@@ -460,6 +465,7 @@ function handleMapTap(ll) {
   startCreate(ll);
 }
 map.on('click', (e) => {
+  if (search.tapSwallowed()) return; // this tap only dismissed the search panel
   const t = e.originalEvent?.target;
   if (t?.closest?.('.hc-pin, .hc-draft-pin')) return;
   const ll = e.latlng.wrap();
@@ -500,6 +506,13 @@ function fillDetail(ev) {
   $('#detail-ends').textContent = `Ends in ${fmtRemaining(ev.expiresAt - Date.now())}`;
   $('#detail-mine').hidden = !mine.has(ev.id);
 
+  // Remove is offered only where it can plausibly work: events this browser
+  // created AND (demo mode, or live with a working anonymous-auth uid — the
+  // owner uid itself is in a private subdoc the client can't read).
+  const rm = $('#remove-btn');
+  rm.hidden = !(mine.has(ev.id) && (store.mode === 'demo' || store.uid));
+  if (rm.dataset.arm) { delete rm.dataset.arm; rm.textContent = 'Remove this event'; }
+
   const btn = $('#join-btn');
   if (joined.has(ev.id)) {
     btn.disabled = true;
@@ -510,13 +523,42 @@ function fillDetail(ev) {
   }
 }
 
+// Fly to the event's exact spot: close-up zoom (never zoom OUT if the user is
+// already closer), with the pin landing in the strip visible above the detail
+// sheet rather than hidden behind it.
+function flyToEvent(lat, lng) {
+  const z = Math.max(map.getZoom(), 15);
+  const sheetH = $('#detail-sheet').getBoundingClientRect().height || 0;
+  const visibleH = Math.max(map.getSize().y - sheetH, 120);
+  const targetY = visibleH * 0.45;
+  const dy = map.getSize().y / 2 - targetY; // px the map centre sits below the pin
+  const centre = map.unproject(map.project([lat, lng], z).add([0, dy]), z);
+  map.flyTo(centre, z, { duration: 0.7 });
+}
+
+// Where the pin is, in words — and a free universal Google Maps link so
+// people can actually navigate there (opens the app on mobile). The address
+// is best-effort reverse geocoding; the link works regardless.
+function fillPlace(ev) {
+  const a = $('#detail-place');
+  a.href = `https://www.google.com/maps?q=${ev.lat.toFixed(6)},${ev.lng.toFixed(6)}`;
+  a.textContent = 'Open in Google Maps ↗';
+  const id = ev.id;
+  reverseGeocode(ev.lat, ev.lng).then((label) => {
+    // Only apply if the user is still looking at the same event.
+    if (label && detailId === id) a.textContent = `${label} ↗`;
+  });
+}
+
 function openDetail(id, fallback) {
   const ev = events.get(id) ?? fallback;
   if (!ev) return;
   detailId = id;
   detailCache = ev;
   fillDetail(ev);
+  fillPlace(ev);
   openSheet($('#detail-sheet'));
+  flyToEvent(ev.lat, ev.lng);
 
   clearInterval(countdownTimer);
   countdownTimer = setInterval(() => {
@@ -542,6 +584,13 @@ $('#join-btn').addEventListener('click', async () => {
     console.error(err);
     joined.delete(id);
     lsSet('hc-joined', [...joined]);
+    // The event was removed by its creator (or expired server-side): stop
+    // showing it rather than inviting a retry that can never succeed.
+    if (err?.code === 'not-found') {
+      if (detailId === id) { dismissSheets(); detailId = null; detailCache = null; }
+      toast('This event is gone');
+      return;
+    }
     // Re-enable from the cached copy — the event may have left the viewport.
     if (detailId === id) fillDetail(events.get(id) ?? detailCache);
     toast('Could not join — try again');
@@ -564,6 +613,34 @@ $('#share-btn').addEventListener('click', async () => {
       toast('Link copied 🔗');
     }
   } catch { /* user cancelled the share */ }
+});
+
+// Deleting is irreversible, so arm-then-confirm: first tap changes the label,
+// second tap within the same view actually removes. Any re-render disarms.
+$('#remove-btn').addEventListener('click', async () => {
+  if (!detailId) return;
+  const rm = $('#remove-btn');
+  if (!rm.dataset.arm) {
+    rm.dataset.arm = '1';
+    rm.textContent = 'Tap again to remove';
+    return;
+  }
+  delete rm.dataset.arm;
+  rm.textContent = 'Remove this event';
+  const id = detailId;
+  rm.disabled = true;
+  try {
+    await store.remove(id);
+    mine.delete(id);
+    lsSet('hc-mine', [...mine]);
+    dismissSheets();
+    toast('Event removed');
+  } catch (err) {
+    console.error('[humanconnect] remove failed:', err);
+    toast("Couldn't remove it — try again");
+  } finally {
+    rm.disabled = false;
+  }
 });
 
 $('#report-btn').addEventListener('click', () => {
@@ -647,6 +724,8 @@ let store = {
   get: async () => null,
   create: async () => { throw new Error('store not ready'); },
   join: async () => {},
+  remove: async () => { throw new Error('store not ready'); },
+  uid: null,
 };
 deliver = renderEvents;
 if (bufferedEvents) renderEvents(bufferedEvents);
