@@ -132,6 +132,9 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   border-radius: var(--r);
   box-shadow: var(--shadow);
   pointer-events: auto;
+  /* Must be allowed to shrink: the actions are fixed-size, and without this
+     the pill's intrinsic width pushes them off-screen entirely on phones. */
+  min-width: 0;
 }
 
 .brand .dot {
@@ -154,6 +157,12 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   font-weight: 550;
   font-size: 19px;
   letter-spacing: 0.01em;
+  /* Last-resort truncation on very narrow devices — the buttons stay reachable
+     no matter what, which the wordmark's full width must never cost. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The .online TLD, styled as part of the wordmark so the domain sticks */
@@ -172,7 +181,20 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   font-variant-numeric: tabular-nums;
 }
 
-.header .actions { display: flex; gap: 8px; pointer-events: auto; }
+/* Never shrink and never wrap: every control here must stay tappable. */
+.header .actions { display: flex; gap: 8px; pointer-events: auto; flex: 0 0 auto; }
+
+/* Phones. The brand pill plus four 44px controls need ~490px; a 360px screen
+   has ~336px. Give the space back to the controls — a hidden "my location"
+   button on a map is a broken app, while the live-count is only nice to have
+   (the pins already show the map is alive). */
+@media (max-width: 430px) {
+  .header .actions { gap: 6px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .brand { padding: 9px 11px 10px; gap: 8px; }
+  .brand h1 { font-size: 14.5px; }
+  .brand .dot, .brand .count { display: none; }
+}
 
 .icon-btn {
   width: 44px;
