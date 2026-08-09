@@ -17,10 +17,10 @@ import { geohash4 } from './geo.js';
 const FIREBASE_VER = '11.6.1';
 const CDN = `https://www.gstatic.com/firebasejs/${FIREBASE_VER}`;
 
-export async function createStore({ onEvents, seedCenter }) {
+export async function createStore({ onEvents, seedCenter, initialCells }) {
   if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     try {
-      return await createFirestoreStore(onEvents);
+      return await createFirestoreStore(onEvents, initialCells);
     } catch (err) {
       console.warn('[humanconnect] Firestore init failed, falling back to demo mode:', err);
     }
@@ -47,7 +47,7 @@ function sanitize(list) {
 // ---------------------------------------------------------------------------
 // Live store — Firestore
 // ---------------------------------------------------------------------------
-async function createFirestoreStore(onEvents) {
+async function createFirestoreStore(onEvents, initialCells) {
   // Core SDK — REQUIRED. If either of these fails to load we genuinely can't
   // run live, so createStore() falls back to demo mode. App Check is loaded
   // separately (below), never here: ad blockers and privacy modes routinely
@@ -58,7 +58,9 @@ async function createFirestoreStore(onEvents) {
     import(`${CDN}/firebase-firestore.js`),
   ]);
   const {
-    getFirestore, collection, query, where, orderBy, limit,
+    getFirestore, initializeFirestore,
+    persistentLocalCache, persistentMultipleTabManager,
+    collection, query, where, orderBy, limit,
     onSnapshot, getDoc, updateDoc, doc, increment,
     writeBatch, serverTimestamp, Timestamp,
   } = fs;
@@ -73,22 +75,29 @@ async function createFirestoreStore(onEvents) {
   // confusing banner over a site that is actually live). The only consequence
   // of a missing token is server-side: if App Check *enforcement* is ON, this
   // particular browser's reads/writes are denied — see README → Abuse protection.
+  //
+  // Initialized in PARALLEL, deliberately not awaited: awaiting the import +
+  // reCAPTCHA setup used to sit between the SDK load and the first query,
+  // adding a round trip to every cold start. With enforcement OFF a token-less
+  // first request is fine; with enforcement ON the very first listen may be
+  // denied and retried once the token arrives — still cheaper than making
+  // every visitor wait on reCAPTCHA before seeing any events.
   if (appCheckSiteKey) {
-    try {
-      const { initializeAppCheck, ReCaptchaV3Provider } =
-        await import(`${CDN}/firebase-app-check.js`);
-      initializeAppCheck(app, {
-        provider: new ReCaptchaV3Provider(appCheckSiteKey),
-        isTokenAutoRefreshEnabled: true,
+    import(`${CDN}/firebase-app-check.js`)
+      .then(({ initializeAppCheck, ReCaptchaV3Provider }) => {
+        initializeAppCheck(app, {
+          provider: new ReCaptchaV3Provider(appCheckSiteKey),
+          isTokenAutoRefreshEnabled: true,
+        });
+      })
+      .catch((err) => {
+        console.warn(
+          '[humanconnect] App Check could not initialize — usually an ad blocker ' +
+          'or privacy mode blocking reCAPTCHA. Staying in live mode without it. If ' +
+          "App Check enforcement is ON, this browser's reads/writes may be denied.",
+          err,
+        );
       });
-    } catch (err) {
-      console.warn(
-        '[humanconnect] App Check could not initialize — usually an ad blocker ' +
-        'or privacy mode blocking reCAPTCHA. Staying in live mode without it. If ' +
-        "App Check enforcement is ON, this browser's reads/writes may be denied.",
-        err,
-      );
-    }
   } else {
     // Loud, not silent: a live deploy with no App Check has ZERO bot
     // protection even though the app "works". See README → Abuse protection.
@@ -120,7 +129,20 @@ async function createFirestoreStore(onEvents) {
     }
   })();
 
-  const db = getFirestore(app);
+  // Local-first cache: returning visitors paint events from IndexedDB
+  // instantly while the live listen catches up, instead of staring at
+  // "finding events…" until the server answers. Multi-tab manager so a second
+  // open tab shares the cache rather than losing the persistence lease. If
+  // IndexedDB is unavailable (some private modes), fall back to memory cache.
+  let db;
+  try {
+    db = initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch (err) {
+    console.warn('[humanconnect] persistent cache unavailable — using memory cache:', err);
+    db = getFirestore(app);
+  }
   const events = collection(db, 'events');
 
   const toEvent = (d) => {
@@ -136,8 +158,12 @@ async function createFirestoreStore(onEvents) {
   };
 
   let unsub = null;
-  let areaCells = null;          // null = nationwide fallback (capped)
-  let subscribedCells = null;    // Set currently subscribed; null = global
+  // Start scoped to the caller's estimated viewport cells when available, so
+  // the FIRST listen is already the one we want. Previously the store always
+  // opened a nationwide listen that app.js tore down moments later for the
+  // scoped one — paying the first-response latency twice on every load.
+  let areaCells = initialCells?.length ? initialCells.slice(0, 30) : null; // null = nationwide fallback (capped)
+  let subscribedCells = areaCells ? new Set(areaCells) : null;             // Set currently subscribed; null = global
 
   const subscribe = () => {
     if (unsub) unsub();
@@ -154,6 +180,10 @@ async function createFirestoreStore(onEvents) {
     ];
     if (areaCells) parts.unshift(where('g4', 'in', areaCells));
     unsub = onSnapshot(query(events, ...parts), (snap) => {
+      // An EMPTY snapshot served from cache means "never seen this area", not
+      // "no events here" — don't flash 'No events here yet' while the server
+      // is still being asked. Cached events, by contrast, paint immediately.
+      if (snap.metadata.fromCache && snap.empty) return;
       const list = snap.docs.map(toEvent);
       const clean = sanitize(list);
       // If a full result set collapses to almost nothing after sanitize, the

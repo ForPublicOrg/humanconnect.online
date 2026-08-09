@@ -11,7 +11,7 @@ import {
 } from './config.js';
 import { createStore } from './store.js';
 import { buildMap } from './map-engine.js';
-import { cellsForBounds } from './geo.js';
+import { cellsForBounds, cellsForView } from './geo.js';
 import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js';
 import { initSearch, reverseGeocode } from './search.js';
 
@@ -47,7 +47,14 @@ const seedCenter = savedView ?? DEFAULT_VIEW;
 // and flushed once renderEvents is wired up.
 let bufferedEvents = null;
 let deliver = (list) => { bufferedEvents = list; };
-const storeP = createStore({ onEvents: (list) => deliver(list), seedCenter });
+const storeP = createStore({
+  onEvents: (list) => deliver(list),
+  seedCenter,
+  // Estimated from the saved view + window size so the very first Firestore
+  // listen is already viewport-scoped — Leaflet hasn't loaded yet. Corrected
+  // by updateArea() once the real map settles.
+  initialCells: cellsForView(seedCenter, innerWidth, innerHeight),
+});
 
 const { map, clusters } = await buildMap('map', seedCenter);
 

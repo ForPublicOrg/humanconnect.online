@@ -66,3 +66,18 @@ export function cellsForBounds(south, west, north, east, maxCells = 25) {
   }
   return [...cells];
 }
+
+/**
+ * Cells for a map view (centre + zoom + viewport pixels) WITHOUT a Leaflet
+ * instance — Web Mercator, linearised around the centre latitude. Lets the
+ * first Firestore listen open already scoped to the saved view while the map
+ * library is still downloading. Slight disagreement with the real bounds is
+ * harmless: if the loaded map's viewport needs a cell this estimate missed,
+ * setArea() simply re-subscribes — which is what every load paid before.
+ */
+export function cellsForView({ lat, lng, zoom }, widthPx, heightPx, maxCells = 25) {
+  const worldPx = 256 * 2 ** zoom;   // map width in px at this zoom
+  const dLng = (widthPx * 180) / worldPx;                                  // half-width in °
+  const dLat = ((heightPx * 180) / worldPx) * Math.cos((lat * Math.PI) / 180); // half-height in °
+  return cellsForBounds(lat - dLat, lng - dLng, lat + dLat, lng + dLng, maxCells);
+}

@@ -40,6 +40,15 @@
   <link rel="preconnect" href="https://d.basemaps.cartocdn.com" />
   <link rel="preconnect" href="https://unpkg.com" crossorigin />
 
+  <!-- Firebase is dynamic-imported by store.js at runtime; preload the two
+       modules on the critical path to the first events so they download while
+       the HTML is still parsing, and warm up the Firestore endpoint the first
+       listen will hit. Keep the version in sync with FIREBASE_VER in
+       js/store.js. Harmless in demo mode (unused preloads, cached). -->
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" />
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" />
+  <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
+
   <link rel="modulepreload" href="js/app.js" />
   <link rel="modulepreload" href="js/theme.js" />
   <link rel="modulepreload" href="js/words.js" />
