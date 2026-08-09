@@ -8,7 +8,5 @@ export const ENV = {
   "FIREBASE_PROJECT_ID": "",
   "FIREBASE_APP_ID": "",
   "APPCHECK_SITE_KEY": "",
-  "MAP_PROVIDER": "carto",
-  "MAPPLS_KEY": "",
   "REPORT_EMAIL": "vikas070696@gmail.com"
 };

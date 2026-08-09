@@ -28,8 +28,6 @@ const config = {
   FIREBASE_PROJECT_ID: env('FIREBASE_PROJECT_ID'),
   FIREBASE_APP_ID: env('FIREBASE_APP_ID'),
   APPCHECK_SITE_KEY: env('APPCHECK_SITE_KEY'),
-  MAP_PROVIDER: env('MAP_PROVIDER', 'carto'),
-  MAPPLS_KEY: env('MAPPLS_KEY'),
   REPORT_EMAIL: env('REPORT_EMAIL', 'vikas070696@gmail.com'),
 };
 
@@ -42,6 +40,5 @@ writeFileSync(OUT, `${banner}\nexport const ENV = ${JSON.stringify(config, null,
 const live = config.FIREBASE_API_KEY && config.FIREBASE_PROJECT_ID;
 console.log(
   `[build] wrote js/env.js — mode: ${live ? 'LIVE (Firestore)' : 'demo'}, ` +
-  `map: ${config.MAP_PROVIDER}${config.MAPPLS_KEY ? ' (key set)' : ''}, ` +
   `appCheck: ${config.APPCHECK_SITE_KEY ? 'on' : 'OFF'}`,
 );

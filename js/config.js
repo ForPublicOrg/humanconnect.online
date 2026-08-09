@@ -1,8 +1,8 @@
 // ============================================================================
 // App configuration.
 //
-// The environment-specific values (Firebase keys, App Check, map provider,
-// report email) live in js/env.js. That file is the committed demo default
+// The environment-specific values (Firebase keys, App Check, report email)
+// live in js/env.js. That file is the committed demo default
 // and is regenerated from Vercel environment variables at build time — so to
 // configure production you set env vars in Vercel, not edit code here.
 // While the Firebase keys are empty the site runs in DEMO MODE.
@@ -28,20 +28,6 @@ export const appCheckSiteKey = ENV.APPCHECK_SITE_KEY;
 
 // Where the "Report" button sends reports (any inbox you check).
 export const REPORT_EMAIL = ENV.REPORT_EMAIL || 'vikas070696@gmail.com';
-
-// ---------------------------------------------------------------------------
-// Map tiles.
-//
-// 'carto'  — keyless, works instantly, but international boundaries follow
-//            OSM convention (NOT the Survey of India depiction).
-// 'mappls' — Mappls / MapmyIndia: Indian provider, boundaries as per the
-//            Government of India. RECOMMENDED before launching publicly in
-//            India. Set MAP_PROVIDER=mappls and MAPPLS_KEY in Vercel.
-// ---------------------------------------------------------------------------
-export const MAP = {
-  provider: ENV.MAP_PROVIDER || 'carto',
-  mapplsKey: ENV.MAPPLS_KEY,
-};
 
 // Maximum live events fetched onto the map at once.
 export const MAX_EVENTS = 500;

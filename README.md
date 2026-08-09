@@ -44,8 +44,6 @@ in the Vercel dashboard — **never commit keys to the repo.**
    | `FIREBASE_APP_ID` | Firebase web app id |
    | `FIREBASE_AUTH_DOMAIN` | *(optional)* only if it isn't `<project>.firebaseapp.com` |
    | `APPCHECK_SITE_KEY` | reCAPTCHA v3 site key — turns on App Check (do this) |
-   | `MAP_PROVIDER` | `carto` (default) or `mappls` |
-   | `MAPPLS_KEY` | Mappls key for India-official borders |
    | `REPORT_EMAIL` | inbox for the Report button |
 
    After changing any variable, **redeploy** (env vars are baked in at build).
@@ -96,27 +94,26 @@ site, Firebase stores the data.
    need Firebase Hosting — `firebase.json` is kept only for the Firestore
    rules/index deploy in step 4.
 
-## India-compliant map borders (important before public launch)
+## India-compliant map borders
 
-Free OpenStreetMap-based tiles (CARTO — the default here) draw international
-boundaries per international convention: parts of Jammu & Kashmir / Aksai Chin
-appear dashed or outside India. That depiction does **not** follow the Survey
-of India map, which Indian law expects for maps published for Indian users.
+The map works worldwide on free CARTO/OSM tiles, but those tiles draw India's
+disputed boundaries (Jammu & Kashmir, Ladakh/Aksai Chin, Arunachal Pradesh)
+per international convention — **not** the Survey of India depiction that
+Indian law expects.
 
-Fix (two env vars): get a **free API key** from
-[Mappls / MapmyIndia](https://apis.mappls.com/console/) — an Indian provider
-whose maps follow official Government of India boundaries (J&K, Ladakh and
-Arunachal Pradesh shown fully as India) — then in Vercel set:
+A border is baked into the raster tile image, so you can't repaint it. The fix
+([js/map-engine.js](js/map-engine.js)) draws **India's official national
+boundary as a thin line on top** of the tiles, in a colour that matches the
+basemap's own admin lines — so the presented border follows India's official
+claim (full J&K, Ladakh/Aksai Chin, Arunachal all shown as India). No API key,
+no provider, and the site still works for the whole world; this only adds
+India's outline.
 
-```
-MAP_PROVIDER = mappls
-MAPPLS_KEY   = YOUR_MAPPLS_KEY
-```
-
-The app loads Mappls' Leaflet-based SDK automatically and everything else
-works identically. In the Mappls console, restrict the key to your domain
-(`humanconnect.online`). If Mappls ever fails to load, the app falls back to
-CARTO tiles instead of showing a blank page.
+The boundary geometry is [data/india-border.geojson](data/india-border.geojson)
+(~27 KB), derived from the official-boundary dataset
+[udit-001/india-maps-data](https://github.com/udit-001/india-maps-data)
+(exterior mesh of the states layer, simplified). To update it, regenerate that
+line and replace the file — nothing else changes.
 
 ## How the safety model works
 
