@@ -48,13 +48,14 @@ function sanitize(list) {
 // Live store — Firestore
 // ---------------------------------------------------------------------------
 async function createFirestoreStore(onEvents) {
-  // Load all three SDK chunks in parallel (App Check too, so it doesn't add a
-  // serial round trip on the data path). App Check is only initialized below
-  // when a site key is configured.
-  const [{ initializeApp }, fs, appCheckMod] = await Promise.all([
+  // Core SDK — REQUIRED. If either of these fails to load we genuinely can't
+  // run live, so createStore() falls back to demo mode. App Check is loaded
+  // separately (below), never here: ad blockers and privacy modes routinely
+  // block reCAPTCHA / the App Check chunk, and that must NOT take the whole
+  // live app down with it.
+  const [{ initializeApp }, fs] = await Promise.all([
     import(`${CDN}/firebase-app.js`),
     import(`${CDN}/firebase-firestore.js`),
-    appCheckSiteKey ? import(`${CDN}/firebase-app-check.js`) : Promise.resolve(null),
   ]);
   const {
     getFirestore, collection, query, where, orderBy, limit,
@@ -64,14 +65,30 @@ async function createFirestoreStore(onEvents) {
 
   const app = initializeApp(firebaseConfig);
 
-  // App Check: proves requests come from this site in a real browser.
-  // Without it, anyone can script Firestore directly with the public config.
+  // App Check: proves requests come from this site in a real browser, so bots
+  // can't script Firestore with the public config. It is BEST EFFORT. Ad
+  // blockers, Brave/incognito shields and privacy extensions frequently block
+  // reCAPTCHA or the App Check SDK; when that happens we stay in LIVE mode and
+  // just run without a token, instead of dropping the user into demo mode (a
+  // confusing banner over a site that is actually live). The only consequence
+  // of a missing token is server-side: if App Check *enforcement* is ON, this
+  // particular browser's reads/writes are denied — see README → Abuse protection.
   if (appCheckSiteKey) {
-    const { initializeAppCheck, ReCaptchaV3Provider } = appCheckMod ?? {};
-    (initializeAppCheck ?? (await import(`${CDN}/firebase-app-check.js`)).initializeAppCheck)(app, {
-      provider: new ReCaptchaV3Provider(appCheckSiteKey),
-      isTokenAutoRefreshEnabled: true,
-    });
+    try {
+      const { initializeAppCheck, ReCaptchaV3Provider } =
+        await import(`${CDN}/firebase-app-check.js`);
+      initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(appCheckSiteKey),
+        isTokenAutoRefreshEnabled: true,
+      });
+    } catch (err) {
+      console.warn(
+        '[humanconnect] App Check could not initialize — usually an ad blocker ' +
+        'or privacy mode blocking reCAPTCHA. Staying in live mode without it. If ' +
+        "App Check enforcement is ON, this browser's reads/writes may be denied.",
+        err,
+      );
+    }
   } else {
     // Loud, not silent: a live deploy with no App Check has ZERO bot
     // protection even though the app "works". See README → Abuse protection.
