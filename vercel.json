@@ -25,7 +25,6 @@
       ]
     },
     {
-      "//": "env.js is regenerated per deploy from Vercel env vars — never cache it, or config changes lag behind a redeploy. Must come AFTER the js rule to override it.",
       "source": "/js/env.js",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
