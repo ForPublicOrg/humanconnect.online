@@ -7,6 +7,11 @@
   <meta name="description" content="A morning yoga session, an evening cricket match, a community cleanup — put it on the map, and watch the pin grow as people join. Every event vanishes when its time runs out." />
   <meta name="theme-color" content="#047857" />
 
+  <!-- Apply the saved theme before first paint (no flash). Allowed by CSP via
+       its sha256 hash — keep this byte-for-byte in sync with the hash in
+       vercel.json / firebase.json if you edit it. -->
+  <script>try{var m=localStorage.getItem('hc-theme');if(m==='dark'||m==='light'){document.documentElement.setAttribute('data-theme',m);document.documentElement.style.colorScheme=m}}catch(e){}</script>
+
   <link rel="canonical" href="https://humanconnect.online/" />
 
   <meta property="og:title" content="humanconnect — drop a plan on the map, see who joins" />
@@ -35,6 +40,7 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin />
 
   <link rel="modulepreload" href="js/app.js" />
+  <link rel="modulepreload" href="js/theme.js" />
   <link rel="modulepreload" href="js/words.js" />
   <link rel="modulepreload" href="js/env.js" />
   <link rel="modulepreload" href="js/config.js" />
@@ -89,6 +95,15 @@
       <span class="count" id="live-count">finding events…</span>
     </div>
     <div class="actions">
+      <button class="icon-btn" id="theme-btn" aria-label="Switch theme" title="Switch theme">
+        <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2" />
+          <path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+        </svg>
+        <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5z" />
+        </svg>
+      </button>
       <button class="icon-btn" id="locate-btn" aria-label="Go to my location" title="My location">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />

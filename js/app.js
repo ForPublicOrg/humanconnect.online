@@ -12,6 +12,7 @@ import {
 import { createStore } from './store.js';
 import { buildMap } from './map-engine.js';
 import { cellsForBounds } from './geo.js';
+import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -594,6 +595,17 @@ $('#locate-btn').addEventListener('click', () => {
     { enableHighAccuracy: true, timeout: 8000 },
   );
 });
+
+// Theme toggle — button icon swaps via CSS; keep the label in sync for a11y.
+const themeBtn = $('#theme-btn');
+const syncThemeLabel = (t) => {
+  const label = t === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+  themeBtn.setAttribute('aria-label', label);
+  themeBtn.setAttribute('title', label);
+};
+syncThemeLabel(effectiveTheme());
+themeBtn.addEventListener('click', toggleTheme);
+onThemeChange(syncThemeLabel);
 
 $('#about-btn').addEventListener('click', () => $('#about-modal').showModal());
 $('#about-close').addEventListener('click', () => $('#about-modal').close());

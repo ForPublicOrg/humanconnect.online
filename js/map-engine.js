@@ -13,6 +13,8 @@
 // Returns { map, clusters }.
 // ============================================================================
 
+import { effectiveTheme, onThemeChange } from './theme.js';
+
 const LEAFLET_VER = '1.9.4';
 const LEAFLET_JS_SRI = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
 const LEAFLET_CSS_SRI = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
@@ -58,11 +60,10 @@ export async function buildMap(containerId, view) {
   map.attributionControl.setPrefix(false);
   map.setView([view.lat, view.lng], view.zoom);
 
-  const dark = window.matchMedia('(prefers-color-scheme: dark)');
   let tiles = null;
   const setTiles = () => {
     if (tiles) map.removeLayer(tiles);
-    const style = dark.matches ? 'dark_all' : 'rastertiles/voyager';
+    const style = effectiveTheme() === 'dark' ? 'dark_all' : 'rastertiles/voyager';
     tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
@@ -73,11 +74,12 @@ export async function buildMap(containerId, view) {
   setTiles();
 
   // India boundary correction — loaded async, non-blocking.
-  const border = addIndiaBorder(map, dark.matches);
+  const border = addIndiaBorder(map, effectiveTheme() === 'dark');
 
-  dark.addEventListener?.('change', () => {
+  // Follow theme changes (OS or the header toggle).
+  onThemeChange((theme) => {
     setTiles();
-    border.then((layer) => layer?.setStyle({ color: BORDER_COLOR[dark.matches ? 'dark' : 'light'] }));
+    border.then((layer) => layer?.setStyle({ color: BORDER_COLOR[theme] }));
   });
 
   // Marker clustering — required UX at scale (hundreds of events per city).

@@ -32,8 +32,12 @@
   --serif: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 }
 
+/* Dark palette. Applies when the OS prefers dark AND the user hasn't forced
+   light, OR when the user explicitly picks dark via the header toggle. The
+   [data-theme] selector outranks the bare :root above, so a manual choice
+   always wins over the OS. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #1a1917;
     --paper-2: #262421;
     --ink: #e9e6e0;
@@ -47,6 +51,20 @@
     --ring-neutral: #7c756b;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
   }
+}
+:root[data-theme="dark"] {
+  --paper: #1a1917;
+  --paper-2: #262421;
+  --ink: #e9e6e0;
+  --ink-soft: #a09a90;
+  --line: rgba(233, 230, 224, 0.13);
+  --accent: #34d399;
+  --accent-deep: #34d399;
+  --grad: linear-gradient(135deg, #047857, #065f46);
+  --cta: #e9e6e0;
+  --cta-ink: #1a1917;
+  --ring-neutral: #7c756b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -161,7 +179,18 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   transition: transform 0.15s ease;
 }
 .icon-btn:active { transform: scale(0.93); }
-.icon-btn svg { width: 20px; height: 20px; stroke: var(--ink); }
+.icon-btn svg { width: 20px; height: 20px; stroke: var(--ink); fill: none; }
+
+/* Theme toggle shows the CURRENT theme's icon (sun = light, moon = dark).
+   Driven by the same theme logic as the palette, so it never flashes. */
+#theme-btn .ic-moon { display: none; }
+#theme-btn .ic-sun { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #theme-btn .ic-sun { display: none; }
+  :root:not([data-theme="light"]) #theme-btn .ic-moon { display: block; }
+}
+:root[data-theme="dark"] #theme-btn .ic-sun { display: none; }
+:root[data-theme="dark"] #theme-btn .ic-moon { display: block; }
 
 /* ---------------------------------------------------------------------------
    Start button
