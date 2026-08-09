@@ -85,6 +85,13 @@
 }
 *::-webkit-scrollbar-corner { background: transparent; }
 
+/* The HTML `hidden` attribute must ALWAYS win. Without this, any rule that
+   sets `display` on an element (e.g. `.banner { display:flex }`) overrides the
+   browser's built-in [hidden]{display:none} — author CSS beats the UA sheet —
+   and the element renders even though JS set it hidden. That exact bug kept
+   the demo-mode banner permanently visible over the live site. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
