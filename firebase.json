@@ -32,14 +32,14 @@
       {
         "source": "/index.html",
         "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+          { "key": "Cache-Control", "value": "no-store" }
         ]
       },
       {
-        "//": "cleanUrls 301s /index.html to /, so real page loads request '/'. Without this rule the root document would fall back to the default 1h cache and deploys would be stale.",
+        "//": "The HTML doc carries the CSP + security headers. Serve it no-store so a 304 revalidation can never preserve a stale CSP after a header change.",
         "source": "/",
         "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+          { "key": "Cache-Control", "value": "no-store" }
         ]
       },
       {
