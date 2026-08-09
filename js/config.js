@@ -10,7 +10,7 @@
 // The values below are product constants, safe to tune in code.
 // ============================================================================
 
-import { ENV } from './env.js';
+import { ENV } from './env.js?v=msmfhh75';
 
 export const firebaseConfig = {
   apiKey: ENV.FIREBASE_API_KEY,
@@ -26,13 +26,21 @@ export const firebaseConfig = {
 // see README → Abuse & attack protection.
 export const appCheckSiteKey = ENV.APPCHECK_SITE_KEY;
 
+// Cloudflare Turnstile (free). The site key is public; the matching SECRET
+// key is a server-only env var read by api/_lib/turnstile.js. Every write goes
+// through /api/*, and those endpoints refuse to run without the secret — so
+// setting one half without the other means writes are off, not unprotected.
+export const turnstileSiteKey = ENV.TURNSTILE_SITE_KEY;
+
 // Where the "Report" button sends reports (any inbox you check).
 export const REPORT_EMAIL = ENV.REPORT_EMAIL || 'vikas070696@gmail.com';
 
 // Maximum live events fetched onto the map at once.
 export const MAX_EVENTS = 500;
 
-// Soft client-side cooldown between creating events (ms).
+// Cooldown between creating events (ms). This copy is for instant feedback
+// only — the enforced one lives in api/_lib/config.js, where clearing browser
+// storage can't reach it. Keep the two in step.
 export const CREATE_COOLDOWN_MS = 2 * 60 * 1000;
 
 // Event duration choices. Max 7 days — enforced again by security rules.

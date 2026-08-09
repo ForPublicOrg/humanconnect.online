@@ -8,5 +8,6 @@ export const ENV = {
   "FIREBASE_PROJECT_ID": "",
   "FIREBASE_APP_ID": "",
   "APPCHECK_SITE_KEY": "",
+  "TURNSTILE_SITE_KEY": "",
   "REPORT_EMAIL": "vikas070696@gmail.com"
 };

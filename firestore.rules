@@ -3,89 +3,52 @@ rules_version = '2';
 // ============================================================================
 // HumanConnect security rules.
 //
-// The whole safety model lives here:
-//   - Event names are integer indices into the fixed word lists in
-//     js/words.js — free text can NEVER enter the database.
-//   - Anyone can read. Anyone can create a *valid* event. The only allowed
-//     update is incrementing `joins` by exactly 1. Nobody can delete
-//     (Firestore's TTL policy on `expiresAt` does the deleting).
+// READ-ONLY FOR EVERY CLIENT. That is the whole file, and it is deliberate.
 //
-// KEEP IN SYNC with js/words.js list lengths:
-//   VIBES = 30, ACTIVITIES = 86, FORMATS = 26
+// Writes used to come straight from the browser, which meant the rules were
+// the only thing shaping them — and rules cannot see an IP, cannot count how
+// many events one person made yesterday, and cannot tell a second join from
+// the same human apart from a first join by someone new. So "one join per
+// person" and "a handful of events per day" were enforced in localStorage,
+// which any visitor clears by opening an incognito window.
+//
+// Now every mutation goes through /api/* (Vercel), which:
+//   - verifies a Cloudflare Turnstile token, so automation has to pay per write
+//   - validates {a,b,c} against the same js/words.js the UI uses, so free text
+//     still cannot enter the database (see api/_lib/validate.js — that file is
+//     now where the legal-safety model lives)
+//   - rate-limits on a server-derived identity a page cannot rewrite
+// and writes with a service account, which bypasses these rules entirely.
+//
+// Anything that reaches Firestore *as a client* is therefore either a read or
+// an attack, and this file answers accordingly.
 // ============================================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // The map. World-readable by design — that is the product.
     match /events/{eventId} {
       allow read: if true;
-      allow create: if validNewEvent();
-      allow update: if joinOnly();
-      // Owner-only removal. The creator's anonymous-auth uid lives in the
-      // NEVER-READABLE events/{id}/priv/owner subdocument (event docs are
-      // world-readable, so putting the uid on the event itself would hand
-      // every scraper a stable pseudonym linking all of one person's events
-      // — home/work inference, harassment of repeat organisers). The get()
-      // costs one read, only on delete.
-      allow delete: if request.auth != null
-        && exists(/databases/$(database)/documents/events/$(eventId)/priv/owner)
-        && get(/databases/$(database)/documents/events/$(eventId)/priv/owner).data.uid == request.auth.uid;
+      allow write: if false;
     }
 
-    // Private per-event metadata. Readable by NOBODY (not even the owner —
-    // the client never needs to read it back); only consulted server-side by
-    // the delete rule above.
-    match /events/{eventId}/priv/{docId} {
-      allow read: if false;
-      // Creatable only as 'owner', only with the caller's real signed uid,
-      // and only in the SAME batched write that creates the event itself
-      // (getAfter sees the batch's end-state; created == request.time only
-      // when the parent event is being created right now). Nobody can attach
-      // an owner doc to an existing event and steal deletion rights.
-      allow create: if docId == 'owner'
-        && request.auth != null
-        && request.resource.data.keys().hasOnly(['uid'])
-        && request.resource.data.uid is string
-        && request.resource.data.uid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/events/$(eventId)).data.created == request.time;
-      allow update: if false;
-      // Deleted alongside the event by the owner's batched remove.
-      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    // Per-event server bookkeeping:
+    //   priv/owner    — hash of the creator's remove-secret
+    //   joiners/{who} — which networks/devices have been counted
+    // Both exist purely so the API can answer "may this person do this?", and
+    // neither is any client's business to read or touch.
+    match /events/{eventId}/{sub}/{docId} {
+      allow read, write: if false;
     }
 
-    // Everything not explicitly matched above is denied.
-
-    function validNewEvent() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['a', 'b', 'c', 'lat', 'lng', 'g4', 'joins', 'created', 'expiresAt'])
-        && d.keys().hasAll(['a', 'b', 'c', 'lat', 'lng', 'g4', 'joins', 'created', 'expiresAt'])
-        // Geohash cell for viewport queries. Rules can't recompute a geohash,
-        // but clients verify g4 against lat/lng on read and drop mismatches.
-        && d.g4 is string && d.g4.matches('[0-9b-hj-km-np-z]{4}')
-        // Words: indices into the fixed lists; -1 means "not used".
-        && d.a is int && d.a >= -1 && d.a < 30
-        && d.b is int && d.b >= 0  && d.b < 86
-        && d.c is int && d.c >= -1 && d.c < 26
-        // Names must be 2–3 words: activity plus at least one other word.
-        && (d.a != -1 || d.c != -1)
-        // A real place on Earth.
-        && d.lat is number && d.lat >= -90 && d.lat <= 90
-        && d.lng is number && d.lng >= -180 && d.lng <= 180
-        // Counter starts at zero; created is the server's clock.
-        && d.joins == 0
-        && d.created == request.time
-        // Time-bound: in the future, at most 7 days (+1h clock-skew slack).
-        && d.expiresAt is timestamp
-        && d.expiresAt > request.time
-        && d.expiresAt < request.time + duration.value(169, 'h');
+    // Rate-limit buckets keyed by an opaque HMAC of the caller's network.
+    // Readable by nobody: the whole point is that they cannot be inspected,
+    // cleared, or pre-poisoned from a browser.
+    match /limits/{bucket} {
+      allow read, write: if false;
     }
 
-    // The ONLY permitted change to an existing event: joins += 1,
-    // and only while the event is still alive.
-    function joinOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys() == ['joins'].toSet()
-        && request.resource.data.joins == resource.data.joins + 1
-        && resource.data.expiresAt > request.time;
-    }
+    // Everything not matched above is denied.
   }
 }

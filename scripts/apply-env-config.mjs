@@ -30,6 +30,7 @@ const config = {
   FIREBASE_PROJECT_ID: env('FIREBASE_PROJECT_ID'),
   FIREBASE_APP_ID: env('FIREBASE_APP_ID'),
   APPCHECK_SITE_KEY: env('APPCHECK_SITE_KEY'),
+  TURNSTILE_SITE_KEY: env('TURNSTILE_SITE_KEY'),
   REPORT_EMAIL: env('REPORT_EMAIL', 'vikas070696@gmail.com'),
 };
 
@@ -42,8 +43,21 @@ writeFileSync(OUT, `${banner}\nexport const ENV = ${JSON.stringify(config, null,
 const live = config.FIREBASE_API_KEY && config.FIREBASE_PROJECT_ID;
 console.log(
   `[build] wrote js/env.js — mode: ${live ? 'LIVE (Firestore)' : 'demo'}, ` +
-  `appCheck: ${config.APPCHECK_SITE_KEY ? 'on' : 'OFF'}`,
+  `appCheck: ${config.APPCHECK_SITE_KEY ? 'on' : 'OFF'}, ` +
+  `turnstile: ${config.TURNSTILE_SITE_KEY ? 'on' : 'OFF'}`,
 );
+
+// Writes go through /api/*, which verify a Turnstile token before touching
+// Firestore. Live with no site key means the widget can't mint one and every
+// create/join will be refused — worth shouting about at build time rather
+// than discovering it from a user's toast message.
+if (live && !config.TURNSTILE_SITE_KEY) {
+  console.warn(
+    '[build] ⚠ TURNSTILE_SITE_KEY is empty while Firebase is configured — ' +
+    'creating and joining events will be DISABLED. Set it (and the server-side ' +
+    'TURNSTILE_SECRET) in Vercel. See README → Abuse & attack protection.',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Cache-busting: stamp a per-deploy version onto every same-origin module URL.

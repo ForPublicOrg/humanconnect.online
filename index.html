@@ -49,15 +49,16 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" />
   <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
 
-  <link rel="modulepreload" href="js/app.js" />
-  <link rel="modulepreload" href="js/theme.js" />
-  <link rel="modulepreload" href="js/words.js" />
-  <link rel="modulepreload" href="js/env.js" />
-  <link rel="modulepreload" href="js/config.js" />
-  <link rel="modulepreload" href="js/geo.js" />
-  <link rel="modulepreload" href="js/store.js" />
-  <link rel="modulepreload" href="js/map-engine.js" />
-  <link rel="modulepreload" href="js/search.js" />
+  <link rel="modulepreload" href="js/app.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/theme.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/words.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/env.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/config.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/geo.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/store.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/map-engine.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/search.js?v=msmfhh75" />
+  <link rel="modulepreload" href="js/turnstile.js?v=msmfhh75" />
 
   <!-- Leaflet is injected by map-engine at runtime; preload it so the tile
        map (the LCP element) doesn't wait a full extra hop to be discovered.
@@ -83,7 +84,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=msmfhh75" />
 </head>
 <body>
   <noscript>
@@ -223,6 +224,30 @@
     </div>
   </section>
 
+  <!-- Share sheet: the event card, then every way out of the browser -->
+  <section class="sheet" id="share-sheet" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Share this event" tabindex="-1" inert>
+    <div class="sheet-head">
+      <div>
+        <p class="sheet-title">Share this event</p>
+        <p class="sheet-sub">A picture of this event on the map.</p>
+      </div>
+      <button class="sheet-close" data-close aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <img id="share-img" class="share-preview" alt="" />
+      <button class="cta" id="share-native" hidden>Share image…</button>
+      <div class="share-row">
+        <button class="ghost-btn" id="share-save">Save image</button>
+        <button class="ghost-btn" id="share-copy" hidden>Copy image</button>
+        <button class="ghost-btn" id="share-link">Copy link</button>
+      </div>
+
+      <p class="field-label">Post the link <span class="opt">· image not included</span></p>
+      <div class="chip-row" id="share-targets"></div>
+      <p class="share-fine" id="share-fine"></p>
+    </div>
+  </section>
+
   <!-- About -->
   <dialog id="about-modal">
     <h2>humanconnect<span class="tld">.online</span> 💚</h2>
@@ -238,9 +263,15 @@
     <button class="cta" id="about-close">Got it</button>
   </dialog>
 
+  <!-- Cloudflare Turnstile renders here. Invisible for almost everyone
+       (interaction-only); when a real challenge is needed it appears centred
+       above the sheets. js/turnstile.js fills it lazily, on first intent to
+       write — nothing third-party loads for people who are only looking. -->
+  <div id="turnstile-host"></div>
+
   <div id="toasts" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=msmfhh75"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>

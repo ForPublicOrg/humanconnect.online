@@ -8,5 +8,8 @@
     "build": "node scripts/apply-env-config.mjs",
     "dev": "node scripts/apply-env-config.mjs && npx --yes http-server -p 5173 -c-1 ."
   },
+  "dependencies": {
+    "firebase-admin": "^14.2.0"
+  },
   "license": "MIT"
 }

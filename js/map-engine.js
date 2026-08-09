@@ -13,7 +13,7 @@
 // Returns { map, clusters }.
 // ============================================================================
 
-import { effectiveTheme, onThemeChange } from './theme.js';
+import { effectiveTheme, onThemeChange } from './theme.js?v=msmfhh75';
 
 const LEAFLET_VER = '1.9.4';
 const LEAFLET_JS_SRI = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
@@ -21,7 +21,18 @@ const LEAFLET_CSS_SRI = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
 
 // Colours chosen to match CARTO's own admin-boundary lines in each theme, so
 // the corrective line reads as part of the basemap rather than an overlay.
-const BORDER_COLOR = { light: '#b3a59a', dark: '#5b5f66' };
+export const BORDER_COLOR = { light: '#b3a59a', dark: '#5b5f66' };
+
+// CARTO basemap per theme, and where the boundary data lives. Exported because
+// the share card (js/share-card.js) paints the same basemap and the same
+// corrective boundary onto a canvas — an exported image showing a *different*
+// border than the live map would defeat the whole point of the overlay.
+export const TILE_STYLES = { light: 'rastertiles/voyager', dark: 'dark_all' };
+export const BORDER_GEOJSON = 'data/india-border.geojson';
+
+// Pin diameter in CSS px — grows with joins so popular plans read from further
+// out, capped so one runaway event can't swallow the map.
+export const pinDiameter = (joins) => Math.round(Math.min(36 + 8 * Math.sqrt(joins), 100));
 
 function loadScript(src, integrity) {
   return new Promise((resolve, reject) => {
@@ -63,7 +74,7 @@ export async function buildMap(containerId, view) {
   let tiles = null;
   const setTiles = () => {
     if (tiles) map.removeLayer(tiles);
-    const style = effectiveTheme() === 'dark' ? 'dark_all' : 'rastertiles/voyager';
+    const style = TILE_STYLES[effectiveTheme()];
     tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
@@ -117,7 +128,7 @@ export async function buildMap(containerId, view) {
 // markers/clusters. Failure is non-fatal — the map still works worldwide.
 async function addIndiaBorder(map, isDark) {
   try {
-    const res = await fetch('data/india-border.geojson');
+    const res = await fetch(BORDER_GEOJSON);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const geo = await res.json();
 

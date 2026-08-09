@@ -637,6 +637,61 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 #detail-place:hover { color: var(--ink); text-decoration: underline; }
 #detail-place:empty { display: none; }
 
+/* --- share sheet -----------------------------------------------------------*/
+.sheet-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 550;
+  font-size: 23px;
+}
+.sheet-sub { margin: 3px 0 0; font-size: 13px; color: var(--ink-soft); }
+
+/* Cap the preview's height so the actions under it stay above the fold on
+   short screens rather than needing a scroll to be discovered. */
+.share-preview {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 42vh;
+  margin: 4px auto 0;
+  aspect-ratio: 4 / 5;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--paper-2);
+}
+
+.share-row { display: flex; gap: 10px; margin-top: 10px; }
+.share-row .ghost-btn { flex: 1; padding: 13px 8px; text-align: center; }
+
+/* Platform chips. A brand dot instead of a logo: unmistakable at a glance,
+   and it keeps the row in the same ink-on-paper language as the rest. */
+.share-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+}
+.share-target::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand, var(--ink-soft));
+  /* Dark brand dots vanish on dark paper — a hairline keeps them visible. */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.share-target:hover { background: var(--paper-2); }
+
+.share-fine {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.share-fine strong { color: var(--ink); font-weight: 700; }
+
 /* ---------------------------------------------------------------------------
    Place search
 --------------------------------------------------------------------------- */
@@ -696,6 +751,38 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 }
 #search-results button:hover,
 #search-results li.active button { background: var(--paper-2); }
+
+/* ---------------------------------------------------------------------------
+   Turnstile host
+
+   Zero-footprint by default: the widget is interaction-only, so it renders at
+   0px and this full-screen layer passes every click through to the map. Only
+   when Cloudflare actually draws a challenge (JS toggles .challenging from a
+   ResizeObserver, so it tracks reality rather than intent) does the scrim
+   appear and take focus away from the sheet underneath.
+--------------------------------------------------------------------------- */
+#turnstile-host {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 2500;
+  pointer-events: none;
+}
+#turnstile-host .cf-widget { pointer-events: auto; }
+
+#turnstile-host.challenging {
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+  backdrop-filter: blur(2px);
+}
+#turnstile-host.challenging .cf-widget {
+  padding: 16px;
+  background: var(--card, var(--paper));
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+}
 
 /* ---------------------------------------------------------------------------
    Toasts, banner, onboarding

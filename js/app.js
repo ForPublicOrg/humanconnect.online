@@ -5,15 +5,16 @@
 import {
   VIBES, ACTIVITIES, FORMATS,
   sentence, activityEmoji, activityColor, isValidCombo,
-} from './words.js';
+} from './words.js?v=msmfhh75';
 import {
   DURATIONS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL,
-} from './config.js';
-import { createStore } from './store.js';
-import { buildMap } from './map-engine.js';
-import { cellsForBounds, cellsForView } from './geo.js';
-import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js';
-import { initSearch, reverseGeocode } from './search.js';
+} from './config.js?v=msmfhh75';
+import { createStore } from './store.js?v=msmfhh75';
+import { buildMap, pinDiameter } from './map-engine.js?v=msmfhh75';
+import { cellsForBounds, cellsForView } from './geo.js?v=msmfhh75';
+import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js?v=msmfhh75';
+import { initSearch, reverseGeocode } from './search.js?v=msmfhh75';
+import { warmTurnstile } from './turnstile.js?v=msmfhh75';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -33,7 +34,23 @@ const lsGet = (k, fallback) => {
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
 const joined = new Set(lsGet('hc-joined', []));
-const mine = new Set(lsGet('hc-mine', []));
+
+// Events this browser created, as id -> owner secret. The secret is issued
+// once by /api/create and is the only thing that can remove the event early;
+// it lives here and nowhere else (its hash is all the server keeps).
+const owned = new Map(Object.entries(lsGet('hc-owned', {})));
+const saveOwned = () => lsSet('hc-owned', Object.fromEntries(owned));
+{
+  // Migration from the pre-API shape: `hc-mine` was a plain array of ids,
+  // owned via anonymous-auth uid. Those events are still "mine" for labelling
+  // but have no secret, so Remove stays hidden — they expire within a week.
+  const legacy = lsGet('hc-mine', null);
+  if (Array.isArray(legacy)) {
+    legacy.forEach((id) => { if (!owned.has(id)) owned.set(id, null); });
+    saveOwned();
+    try { localStorage.removeItem('hc-mine'); } catch {}
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Map
@@ -97,6 +114,45 @@ if (!savedView && 'geolocation' in navigator) {
 }
 
 // ---------------------------------------------------------------------------
+// Write errors, in English
+//
+// Every failure from /api/* carries a machine code; turn it into something a
+// person can act on. "Could not create the event" is useless when the real
+// answer is "your ad blocker ate the human check" or "wait 90 seconds".
+// ---------------------------------------------------------------------------
+function fmtWait(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (s <= 90) return `${s}s`;
+  const m = Math.ceil(s / 60);
+  return m <= 90 ? `${m} min` : `${Math.ceil(m / 60)}h`;
+}
+
+function writeError(err, fallback) {
+  switch (err?.code) {
+    case 'offline':
+      return "You're offline — try again when you're back.";
+    case 'verification_unavailable':
+      return 'The human check could not load — an ad blocker or privacy mode may be blocking it.';
+    case 'verification_timeout':
+      return 'The human check timed out — please try again.';
+    case 'verification_failed':
+    case 'verification_stale':
+      return "Couldn't confirm you're human — please try again.";
+    case 'rate_limited':
+      return err.retryAfterMs
+        ? `${err.message} Try again in ${fmtWait(err.retryAfterMs)}.`
+        : err.message;
+    case 'network_cap':
+      return 'This connection has already joined this event.';
+    case 'verification_unconfigured':
+    case 'server_unconfigured':
+      return 'Not switched on yet — check back soon.';
+    default:
+      return fallback;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Toasts
 // ---------------------------------------------------------------------------
 function toast(msg, ms = 2600) {
@@ -114,8 +170,6 @@ function toast(msg, ms = 2600) {
 // ---------------------------------------------------------------------------
 const markers = new Map(); // id -> { marker, joins }
 let events = new Map();    // id -> event
-
-const pinDiameter = (joins) => Math.round(Math.min(36 + 8 * Math.sqrt(joins), 100));
 
 function pinHtml(ev) {
   const d = pinDiameter(ev.joins);
@@ -337,6 +391,9 @@ function startCreate(latlng) {
   openSheet($('#create-sheet'));
   panDraftAboveSheet(latlng);
   dismissOnboarding();
+  // Fetch and render Turnstile while the user is still picking words, so the
+  // human check is already warm by the time they hit the button.
+  warmTurnstile('create');
 }
 
 // Slide the map so the draft pin sits in the visible strip ABOVE the bottom
@@ -437,19 +494,19 @@ $('#create-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Putting it on the map…';
   try {
-    const id = await store.create({
+    const { id, secret } = await store.create({
       a: draft.a, b: draft.b, c: draft.c,
       lat: draft.latlng.lat, lng: draft.latlng.lng,
       durationMs: draft.durationMs,
     });
-    mine.add(id);
-    lsSet('hc-mine', [...mine]);
+    owned.set(id, secret ?? null);
+    saveOwned();
     lsSet('hc-last-create', Date.now());
     dismissSheets();
     toast('Your event is live 💚');
   } catch (err) {
     console.error(err);
-    toast('Could not create the event — check your connection');
+    toast(writeError(err, 'Could not create the event — check your connection'), 4500);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Put it on the map';
@@ -490,6 +547,10 @@ let detailId = null;
 let detailCache = null; // last-known copy, survives viewport-scoped unsubscribes
 let countdownTimer = null;
 
+// Sharing draws the event and its map onto a canvas — no business on the
+// first-paint path, so js/share.js is fetched only once a sheet is open.
+const shareModule = () => import('./share.js?v=msmfhh75');
+
 function fmtRemaining(ms) {
   if (ms <= 0) return 'ended';
   const s = Math.floor(ms / 1000);
@@ -502,22 +563,27 @@ function fmtRemaining(ms) {
   return `${s % 60}s`;
 }
 
+const fmtJoins = (joins) =>
+  joins === 0 ? 'Be the first to join' :
+  joins === 1 ? '1 person joining' : `${joins} people joining`;
+
+const fmtEnds = (ev) => `Ends in ${fmtRemaining(ev.expiresAt - Date.now())}`;
+
 function fillDetail(ev) {
   if (!ev) return;
   $('#detail-emoji').textContent = activityEmoji(ev.b);
   $('#detail-emoji').style.setProperty('--ring', activityColor(ev.b));
   $('#detail-title').textContent = sentence(ev.a, ev.b, ev.c);
-  $('#detail-joins').textContent =
-    ev.joins === 0 ? 'Be the first to join' :
-    ev.joins === 1 ? '1 person joining' : `${ev.joins} people joining`;
-  $('#detail-ends').textContent = `Ends in ${fmtRemaining(ev.expiresAt - Date.now())}`;
-  $('#detail-mine').hidden = !mine.has(ev.id);
+  $('#detail-joins').textContent = fmtJoins(ev.joins);
+  $('#detail-ends').textContent = fmtEnds(ev);
+  $('#detail-mine').hidden = !owned.has(ev.id);
 
-  // Remove is offered only where it can plausibly work: events this browser
-  // created AND (demo mode, or live with a working anonymous-auth uid — the
-  // owner uid itself is in a private subdoc the client can't read).
+  // Remove is offered only where it can actually work: events this browser
+  // created AND for which we still hold the owner secret. (Events from before
+  // the API existed are labelled "yours" but have no secret — nothing can take
+  // those down early.)
   const rm = $('#remove-btn');
-  rm.hidden = !(mine.has(ev.id) && (store.mode === 'demo' || store.uid));
+  rm.hidden = !owned.get(ev.id);
   if (rm.dataset.arm) { delete rm.dataset.arm; rm.textContent = 'Remove this event'; }
 
   const btn = $('#join-btn');
@@ -566,6 +632,8 @@ function openDetail(id, fallback) {
   fillPlace(ev);
   openSheet($('#detail-sheet'));
   flyToEvent(ev.lat, ev.lng);
+  if (!joined.has(id)) warmTurnstile('join'); // Join is one tap away — get ready
+  shareModule().catch(() => {}); // so does Share — fetch it while they read
 
   clearInterval(countdownTimer);
   countdownTimer = setInterval(() => {
@@ -600,26 +668,40 @@ $('#join-btn').addEventListener('click', async () => {
     }
     // Re-enable from the cached copy — the event may have left the viewport.
     if (detailId === id) fillDetail(events.get(id) ?? detailCache);
-    toast('Could not join — try again');
+    toast(writeError(err, 'Could not join — try again'), 4500);
   }
 });
 
+// Share: draw the event and its map into an image, then hand it to the share
+// sheet (js/share.js), which owns every route out of the browser.
 $('#share-btn').addEventListener('click', async () => {
   if (!detailId) return;
   const ev = events.get(detailId) ?? detailCache;
+  if (!ev) return;
   // Embed coordinates so the recipient — usually browsing another area — pans
   // straight to it even before the event doc is fetched.
-  const at = ev ? `@${ev.lat.toFixed(5)},${ev.lng.toFixed(5)}` : '';
-  const url = `${location.origin}${location.pathname}#e=${detailId}${at}`;
-  const title = ev ? sentence(ev.a, ev.b, ev.c) : 'humanconnect event';
+  const url = `${location.origin}${location.pathname}#e=${detailId}` +
+    `@${ev.lat.toFixed(5)},${ev.lng.toFixed(5)}`;
+  const title = sentence(ev.a, ev.b, ev.c);
   try {
-    if (navigator.share) {
-      await navigator.share({ title, text: `${title} — join me on HumanConnect`, url });
-    } else {
-      await navigator.clipboard.writeText(url);
-      toast('Link copied 🔗');
-    }
-  } catch { /* user cancelled the share */ }
+    const { openShare } = await shareModule();
+    await openShare(ev, {
+      url,
+      title,
+      text: `${title} — join me on humanconnect`,
+      // Read off the screen, not re-derived: the card is a picture of what
+      // the user is looking at, down to the button labels.
+      joinsText: fmtJoins(ev.joins),
+      endsText: fmtEnds(ev),
+      place: $('#detail-place').textContent,
+      joinLabel: $('#join-btn').textContent,
+      shareLabel: $('#share-btn').textContent,
+      liveCount: $('#live-count').textContent,
+    }, { openSheet, toast });
+  } catch (err) {
+    console.error('[humanconnect] share unavailable:', err);
+    toast('Sharing is unavailable right now');
+  }
 });
 
 // Deleting is irreversible, so arm-then-confirm: first tap changes the label,
@@ -644,9 +726,9 @@ $('#remove-btn').addEventListener('click', async () => {
   detailCache = null;
   rm.disabled = true;
   try {
-    await store.remove(id);
-    mine.delete(id);
-    lsSet('hc-mine', [...mine]);
+    await store.remove(id, owned.get(id));
+    owned.delete(id);
+    saveOwned();
     dismissSheets();
     toast('Event removed');
   } catch (err) {
@@ -654,7 +736,7 @@ $('#remove-btn').addEventListener('click', async () => {
     detailId = id; // put the user back where they were
     detailCache = cache;
     fillDetail(events.get(id) ?? cache);
-    toast("Couldn't remove it — try again");
+    toast(writeError(err, "Couldn't remove it — try again"), 4500);
   } finally {
     rm.disabled = false;
   }
@@ -740,9 +822,8 @@ let store = {
   setArea() {},
   get: async () => null,
   create: async () => { throw new Error('store not ready'); },
-  join: async () => {},
+  join: async () => { throw new Error('store not ready'); },
   remove: async () => { throw new Error('store not ready'); },
-  uid: null,
 };
 deliver = renderEvents;
 if (bufferedEvents) renderEvents(bufferedEvents);

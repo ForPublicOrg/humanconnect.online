@@ -2,20 +2,91 @@
 // Storage adapter. Two implementations behind one tiny API:
 //
 //   store.mode                     'live' (Firestore) | 'demo' (this browser)
-//   store.create({a,b,c,lat,lng,durationMs}) -> Promise<id>
-//   store.join(id)                 -> Promise<void>
+//   store.create({a,b,c,lat,lng,durationMs}) -> Promise<{id, secret}>
+//   store.join(id)                 -> Promise<{already}>
+//   store.remove(id, secret)       -> Promise<void>
 //
 // Both push the full list of live events to onEvents(list) whenever anything
 // changes. Event shape: { id, a, b, c, lat, lng, joins, expiresAt } with
 // expiresAt in epoch milliseconds.
+//
+// READS come straight from Firestore, live, exactly as before. WRITES go
+// through /api/* instead: they need a Cloudflare Turnstile token and limits
+// keyed on identity the server derives, neither of which a page can fake.
+// See api/_lib/config.js for the numbers and why they are what they are.
 // ============================================================================
 
-import { firebaseConfig, appCheckSiteKey, MAX_EVENTS } from './config.js';
-import { isValidCombo } from './words.js';
-import { geohash4 } from './geo.js';
+import { firebaseConfig, appCheckSiteKey, MAX_EVENTS } from './config.js?v=msmfhh75';
+import { isValidCombo } from './words.js?v=msmfhh75';
+import { geohash4 } from './geo.js?v=msmfhh75';
+import { getTurnstileToken } from './turnstile.js?v=msmfhh75';
 
 const FIREBASE_VER = '11.6.1';
 const CDN = `https://www.gstatic.com/firebasejs/${FIREBASE_VER}`;
+
+// ---------------------------------------------------------------------------
+// Talking to the write API
+// ---------------------------------------------------------------------------
+const apiError = (code, message) => Object.assign(new Error(message || code), { code });
+
+async function apiPost(path, body) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'omit',
+    });
+  } catch {
+    throw apiError('offline', 'Could not reach the server.');
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+  if (!res.ok || data?.ok === false) {
+    const e = apiError(data?.error || 'server_error', data?.message || `HTTP ${res.status}`);
+    if (typeof data?.retryAfterMs === 'number') e.retryAfterMs = data.retryAfterMs;
+    throw e;
+  }
+  return data ?? {};
+}
+
+/**
+ * A per-browser id, sent with joins so an honest visitor is counted once even
+ * if they tap twice or reopen the link. It is NOT a security control — a new
+ * incognito window mints a new one, which is precisely why the server also
+ * caps joins per network. When storage is unavailable we use a per-session
+ * value rather than a shared constant, so several blocked-storage visitors
+ * behind one address don't collapse into a single "device".
+ */
+let sessionDevice = null;
+function deviceId() {
+  try {
+    let v = localStorage.getItem('hc-device');
+    if (!v) {
+      v = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem('hc-device', v);
+    }
+    return v;
+  } catch {
+    sessionDevice ??= `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    return sessionDevice;
+  }
+}
+
+/**
+ * Turnstile hands out single-use tokens, so an expired one is an ordinary
+ * event (a create sheet left open while someone picked a spot). Retry once
+ * with a fresh token before bothering the user about it.
+ */
+async function withToken(action, send) {
+  try {
+    return await send(await getTurnstileToken(action));
+  } catch (err) {
+    if (err?.code !== 'verification_stale') throw err;
+    return send(await getTurnstileToken(action));
+  }
+}
 
 export async function createStore({ onEvents, seedCenter, initialCells }) {
   if (firebaseConfig.apiKey && firebaseConfig.projectId) {
@@ -61,8 +132,7 @@ async function createFirestoreStore(onEvents, initialCells) {
     getFirestore, initializeFirestore,
     persistentLocalCache, persistentMultipleTabManager,
     collection, query, where, orderBy, limit,
-    onSnapshot, getDoc, updateDoc, doc, increment,
-    writeBatch, serverTimestamp, Timestamp,
+    onSnapshot, getDoc, doc, Timestamp,
   } = fs;
 
   const app = initializeApp(firebaseConfig);
@@ -72,9 +142,10 @@ async function createFirestoreStore(onEvents, initialCells) {
   // blockers, Brave/incognito shields and privacy extensions frequently block
   // reCAPTCHA or the App Check SDK; when that happens we stay in LIVE mode and
   // just run without a token, instead of dropping the user into demo mode (a
-  // confusing banner over a site that is actually live). The only consequence
-  // of a missing token is server-side: if App Check *enforcement* is ON, this
-  // particular browser's reads/writes are denied — see README → Abuse protection.
+  // confusing banner over a site that is actually live). Since writes moved to
+  // /api/*, the only thing App Check can still guard is READ volume — and the
+  // only consequence of a missing token is that this browser's reads are
+  // denied if enforcement is ON. See README → Abuse protection.
   //
   // Initialized in PARALLEL, deliberately not awaited: awaiting the import +
   // reCAPTCHA setup used to sit between the SDK load and the first query,
@@ -99,35 +170,19 @@ async function createFirestoreStore(onEvents, initialCells) {
         );
       });
   } else {
-    // Loud, not silent: a live deploy with no App Check has ZERO bot
-    // protection even though the app "works". See README → Abuse protection.
-    console.warn(
-      '[humanconnect] App Check is OFF (appCheckSiteKey is empty). Firestore ' +
-      'is reachable by any script using the public config. Set appCheckSiteKey ' +
-      'in js/config.js and enable enforcement before relying on this in production.',
+    // Worth noting, not alarming: writes are protected by Turnstile + the
+    // server-side limits regardless. Without App Check, READS are open to any
+    // script holding the public config. See README → Abuse protection.
+    console.info(
+      '[humanconnect] App Check is OFF (appCheckSiteKey is empty) — Firestore ' +
+      'reads are open to any script using the public config. Writes are ' +
+      'unaffected: they go through /api/* and require Turnstile.',
     );
   }
 
-  // Anonymous auth: gives this browser a signed uid so events can carry an
-  // `owner` and the rules can allow owner-only deletes. Best effort, exactly
-  // like App Check — if it can't load or the provider is disabled, events are
-  // simply created without an owner (they work fully, just can't be removed
-  // early; TTL still expires them). Never let auth failure break the app.
-  let uid = null;
-  const authReady = (async () => {
-    try {
-      const { getAuth, signInAnonymously } = await import(`${CDN}/firebase-auth.js`);
-      const cred = await signInAnonymously(getAuth(app));
-      uid = cred.user.uid;
-      return uid;
-    } catch (err) {
-      console.warn(
-        '[humanconnect] Anonymous auth unavailable — events created in this ' +
-        'browser cannot be removed before they expire.', err,
-      );
-      return null;
-    }
-  })();
+  // (Anonymous auth used to run here, purely to give the delete rule a uid to
+  // check. Writes are server-side now and ownership is a secret issued by
+  // /api/create, so the whole auth round trip — and its SDK chunk — is gone.)
 
   // Local-first cache: returning visitors paint events from IndexedDB
   // instantly while the live listen catches up, instead of staring at
@@ -240,39 +295,25 @@ async function createFirestoreStore(onEvents, initialCells) {
         return null;
       }
     },
+    // Writes go to /api/*, never to Firestore directly — the rules deny
+    // client writes outright. The snapshot listener above picks the result up
+    // a moment later, so nothing here has to touch the local event list.
     async create({ a, b, c, lat, lng, durationMs }) {
-      // Wait for the uid (fast after first sign-in; null if auth is blocked).
-      const owner = await authReady;
-      const evRef = doc(events); // auto-id
-      const batch = writeBatch(db);
-      batch.set(evRef, {
-        a, b, c, lat, lng,
-        g4: geohash4(lat, lng),
-        joins: 0,
-        created: serverTimestamp(),
-        expiresAt: Timestamp.fromMillis(Date.now() + durationMs),
-      });
-      // Ownership lives in a NEVER-READABLE subdoc — the public event doc
-      // must not carry the uid, or every scraper could link all of one
-      // person's events into a movement profile. Written atomically with the
-      // event; the rules only accept it inside this same batch.
-      if (owner) batch.set(doc(db, 'events', evRef.id, 'priv', 'owner'), { uid: owner });
-      await batch.commit();
-      return evRef.id;
+      const out = await withToken('create', (token) =>
+        apiPost('/api/create', { a, b, c, lat, lng, durationMs, token }));
+      // The secret is the ONLY proof of ownership; it exists in this browser
+      // and nowhere else. Losing it just means the event runs its full course.
+      return { id: out.id, secret: out.secret };
     },
     async join(id) {
-      await updateDoc(doc(db, 'events', id), { joins: increment(1) });
+      return withToken('join', (token) =>
+        apiPost('/api/join', { id, token, device: deviceId() }));
     },
-    // Owner-only: the delete rule checks priv/owner against the signed uid,
-    // so this succeeds only in the browser that created the event.
-    async remove(id) {
-      await authReady;
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'events', id));
-      batch.delete(doc(db, 'events', id, 'priv', 'owner'));
-      await batch.commit();
+    // Owner-only: the server compares a hash of this secret against the one
+    // stored when the event was created.
+    async remove(id, secret) {
+      await apiPost('/api/remove', { id, secret });
     },
-    get uid() { return uid; },
   };
 }
 
@@ -324,7 +365,9 @@ function createDemoStore(onEvents, seedCenter) {
         joins: 0,
         expiresAt: Date.now() + durationMs,
       }));
-      return id;
+      // No server, so no real ownership token — a placeholder keeps the UI's
+      // "do I own this?" check uniform across both stores.
+      return { id, secret: 'demo' };
     },
     async join(id) {
       let found = false;
@@ -335,6 +378,7 @@ function createDemoStore(onEvents, seedCenter) {
       // Joining a removed/expired event must FAIL so the UI's optimistic
       // "You're in ✓" rolls back instead of persisting against nothing.
       if (!found) { const err = new Error('event gone'); err.code = 'not-found'; throw err; }
+      return { already: false };
     },
     // Demo has no server identity — the UI's own "mine" tracking is the gate.
     async remove(id) {
@@ -343,7 +387,6 @@ function createDemoStore(onEvents, seedCenter) {
         if (i !== -1) list.splice(i, 1);
       });
     },
-    uid: null,
   };
 }
 
