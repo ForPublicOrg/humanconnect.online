@@ -10,12 +10,14 @@
 // by design; the backend is protected by App Check + Firestore rules.
 // ============================================================================
 
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, '..', 'js', 'env.js');
+const ROOT = join(HERE, '..');
+const JS_DIR = join(ROOT, 'js');
+const OUT = join(JS_DIR, 'env.js');
 
 const env = (name, fallback = '') => {
   const v = process.env[name];
@@ -42,3 +44,41 @@ console.log(
   `[build] wrote js/env.js — mode: ${live ? 'LIVE (Firestore)' : 'demo'}, ` +
   `appCheck: ${config.APPCHECK_SITE_KEY ? 'on' : 'OFF'}`,
 );
+
+// ---------------------------------------------------------------------------
+// Cache-busting: stamp a per-deploy version onto every same-origin module URL.
+//
+// index.html is served no-store (always fresh) but js/*.js and css/*.css carry
+// a long max-age, so a stale cached copy can shadow a new deploy for up to a
+// day. Appending ?v=<build> to each same-origin script/style URL — both the
+// <script>/modulepreload/<link> tags in index.html AND every relative import
+// inside js/*.js — changes the URL on each deploy, forcing an immediate refetch
+// while keeping the long cache for unchanged versions. External imports (the
+// gstatic Firebase chunks, Leaflet on unpkg) use full URLs / template literals
+// and are deliberately left untouched.
+//
+// Vercel builds from a clean checkout, so rewriting in place only affects the
+// deployed artifacts, never the committed source. The regexes strip any
+// existing ?v=… first, so re-running the build locally stays idempotent.
+// ---------------------------------------------------------------------------
+const BUILD = (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 8) || Date.now().toString(36);
+
+// Relative ES imports inside js/*.js:  from './x.js'  /  import('./x.js')
+const IMPORT_RE = /(\bfrom\s+|\bimport\s*\(\s*)(['"])(\.\/[^'"?]+\.js)(?:\?v=[^'"]*)?\2/g;
+let rewrittenModules = 0;
+for (const file of readdirSync(JS_DIR)) {
+  if (!file.endsWith('.js')) continue;
+  const path = join(JS_DIR, file);
+  const src = readFileSync(path, 'utf8');
+  const next = src.replace(IMPORT_RE, (_m, kw, q, spec) => `${kw}${q}${spec}?v=${BUILD}${q}`);
+  if (next !== src) { writeFileSync(path, next); rewrittenModules++; }
+}
+
+// src="js/x.js" / href="js/x.js" / href="css/x.css" in index.html:
+const HTML = join(ROOT, 'index.html');
+const html = readFileSync(HTML, 'utf8');
+const HTML_RE = /((?:src|href)=")((?:js|css)\/[^"?]+\.(?:js|css))(?:\?v=[^"]*)?(")/g;
+const nextHtml = html.replace(HTML_RE, (_m, pre, url, close) => `${pre}${url}?v=${BUILD}${close}`);
+if (nextHtml !== html) writeFileSync(HTML, nextHtml);
+
+console.log(`[build] cache-bust version ?v=${BUILD} — stamped index.html + ${rewrittenModules} js module(s)`);
