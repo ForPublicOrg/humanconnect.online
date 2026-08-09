@@ -628,6 +628,13 @@ $('#remove-btn').addEventListener('click', async () => {
   delete rm.dataset.arm;
   rm.textContent = 'Remove this event';
   const id = detailId;
+  const cache = detailCache;
+  // Detach from the event BEFORE the write. Removing it re-renders the map
+  // synchronously (the demo store emits inline), and a still-set detailId
+  // makes that pass think the event vanished from under the user — firing a
+  // contradictory "This event is gone" on top of our own "Event removed".
+  detailId = null;
+  detailCache = null;
   rm.disabled = true;
   try {
     await store.remove(id);
@@ -637,6 +644,9 @@ $('#remove-btn').addEventListener('click', async () => {
     toast('Event removed');
   } catch (err) {
     console.error('[humanconnect] remove failed:', err);
+    detailId = id; // put the user back where they were
+    detailCache = cache;
+    fillDetail(events.get(id) ?? cache);
     toast("Couldn't remove it — try again");
   } finally {
     rm.disabled = false;
