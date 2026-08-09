@@ -30,6 +30,10 @@
   --shadow: 0 1px 2px rgba(35, 38, 43, 0.08), 0 10px 28px rgba(35, 38, 43, 0.14);
   --r: 12px;
   --serif: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  /* Height of the floating top chrome — anything anchored below the header
+     (banners, the search panel) offsets from this, so the two stay in sync
+     when the header wraps to two rows on phones. */
+  --chrome-top: 72px;
 }
 
 /* Dark palette. Applies when the OS prefers dark AND the user hasn't forced
@@ -184,18 +188,6 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 /* Never shrink and never wrap: every control here must stay tappable. */
 .header .actions { display: flex; gap: 8px; pointer-events: auto; flex: 0 0 auto; }
 
-/* Phones. The brand pill plus four 44px controls need ~490px; a 360px screen
-   has ~336px. Give the space back to the controls — a hidden "my location"
-   button on a map is a broken app, while the live-count is only nice to have
-   (the pins already show the map is alive). */
-@media (max-width: 430px) {
-  .header .actions { gap: 6px; }
-  .icon-btn { width: 40px; height: 40px; }
-  .brand { padding: 9px 11px 10px; gap: 8px; }
-  .brand h1 { font-size: 14.5px; }
-  .brand .dot, .brand .count { display: none; }
-}
-
 .icon-btn {
   width: 44px;
   height: 44px;
@@ -220,6 +212,21 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 }
 :root[data-theme="dark"] #theme-btn .ic-sun { display: none; }
 :root[data-theme="dark"] #theme-btn .ic-moon { display: block; }
+
+/* Narrow screens. Measured: the brand pill wants ~363px and the four controls
+   194px, so one row needs ~589px of viewport. Below that they cannot share a
+   row without either shrinking the wordmark to ~11px or pushing controls
+   off-screen — which is exactly what used to happen (theme, my-location and
+   about were unreachable on every common phone). So wrap instead: pill on the
+   first row, controls right-aligned on the second. Nothing hidden, nothing
+   truncated, 44px touch targets intact. */
+@media (max-width: 600px) {
+  :root { --chrome-top: 122px; } /* two rows measure 107px; plus a little air */
+  .header { flex-wrap: wrap; }
+  .brand { flex: 0 1 auto; }
+  .brand h1 { font-size: 16px; }
+  .header .actions { margin-left: auto; } /* right-align on its own row */
+}
 
 /* ---------------------------------------------------------------------------
    Start button
@@ -635,7 +642,7 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 --------------------------------------------------------------------------- */
 .search-panel {
   position: fixed;
-  top: calc(72px + env(safe-area-inset-top));
+  top: calc(var(--chrome-top) + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   width: min(520px, calc(100vw - 24px));
@@ -725,7 +732,7 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 
 .banner {
   position: fixed;
-  top: calc(72px + env(safe-area-inset-top));
+  top: calc(var(--chrome-top) + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
