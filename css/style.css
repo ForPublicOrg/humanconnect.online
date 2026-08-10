@@ -524,6 +524,27 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 .search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .search::placeholder { color: var(--ink-soft); }
 
+/* The exact start-time picker. A native datetime control — the OS wheel on a
+   phone beats anything we could build — dressed like .search so the sheet
+   still reads as one surface. It follows the theme on its own: theme.js sets
+   color-scheme on <html>, which is what restyles native widgets. */
+.time-input {
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.time-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* Says what the picked time actually is, and — as .warn — why we moved it. */
+.field-note { margin: 8px 2px 0; font-size: 13px; line-height: 1.45; color: var(--ink-soft); }
+.field-note.warn { color: var(--ink); font-weight: 600; }
+
 .cta {
   width: 100%;
   margin-top: 16px;
@@ -573,6 +594,9 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   font-variant-numeric: tabular-nums;
 }
 #detail-joins { font-weight: 700; color: var(--accent-deep); }
+/* When a plan begins is the thing a reader scans for after the name, so it
+   carries more weight than the countdown beside it. */
+#detail-starts { font-weight: 600; color: var(--ink); }
 
 .mine-tag {
   margin: 8px 0 0;

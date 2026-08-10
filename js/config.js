@@ -55,5 +55,19 @@ export const DURATIONS = [
   { label: '1 week', ms: 7 * 24 * 3600e3 },
 ];
 
+// Quick start times, as offsets from the moment they're tapped. Only the ones
+// that still land inside the chosen duration are offered, so the chip row
+// teaches the rule the API enforces: an event may not begin after it has left
+// the map. Anything these don't cover goes through the exact picker.
+export const START_PRESETS = [
+  { label: 'In 30 min', ms: 30 * 60e3 },
+  { label: 'In 1h',     ms: 1 * 3600e3 },
+  { label: 'In 2h',     ms: 2 * 3600e3 },
+  { label: 'In 4h',     ms: 4 * 3600e3 },
+  { label: 'In 12h',    ms: 12 * 3600e3 },
+  { label: 'In 1 day',  ms: 24 * 3600e3 },
+  { label: 'In 3 days', ms: 3 * 24 * 3600e3 },
+];
+
 // Initial map view when nothing is saved and geolocation is unavailable.
 export const DEFAULT_VIEW = { lat: 22.5, lng: 78.9, zoom: 5 }; // India

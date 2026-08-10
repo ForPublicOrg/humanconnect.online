@@ -16,6 +16,10 @@ join. The pin grows as more people join. When the event's time runs out (max
 - **Abuse-proof names.** Event names are composed from a fixed word list
   ([js/words.js](js/words.js)) and stored as integer indices — free text can
   never enter the database. The API validates against that same file.
+- **Optional start time.** A plan can say when it actually begins, picked from
+  quick presets or an exact time. It is bounded by how long the event stays on
+  the map — nothing can be scheduled for after it has already vanished — and
+  the API enforces that, not just the sheet.
 - **Place search.** Jump anywhere with the header search (geocoding by
   [Photon](https://photon.komoot.io), keyless, OpenStreetMap data, worldwide).
 
@@ -223,7 +227,8 @@ denies every client write. Creating, joining and removing go through
 | Join-count inflation | A join is recorded against `events/{id}/joiners/{networkHash}` before the counter moves. A repeat from the same device is idempotent; a *new* device on the same connection is allowed up to 8 per event, then refused. Opening incognito changes the device, never the network. |
 | Deleting other people's events | `/api/create` returns a 24-byte secret that exists only in the creator's browser; only its HMAC is stored, in a subdocument no client can read. `/api/remove` compares in constant time. The public event doc still carries no identifier, so scrapers can't link one person's events into a movement profile. |
 | Events that never expire | The API clamps `expiresAt` to 7 days and sets it itself; TTL erases them after expiry. |
-| Junk documents / extra fields | The API constructs the document from scratch out of nine validated fields. Anything else in the request body is dropped, including `g4` and `joins`. |
+| Start times outside the event | `startAt` is sent as an *offset* from now, never a timestamp, and rejected unless it lands between 0 and the duration. The server adds it to its own clock, so a wrong device clock can't place an event outside its window — or outside the 7-day ceiling. |
+| Junk documents / extra fields | The API constructs the document from scratch out of validated fields only. Anything else in the request body is dropped, including `g4` and `joins`. |
 | Hidden events (`g4` spoofing) | `g4` is computed server-side from the coordinates, so it can no longer disagree with them. |
 
 ## Abuse & attack protection (read before launch)

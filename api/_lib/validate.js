@@ -28,7 +28,7 @@ export function assertEventId(id) {
 }
 
 /**
- * Turn an untrusted body into exactly the nine fields an event document may
+ * Turn an untrusted body into exactly the fields an event document may
  * contain. Anything else the caller sent is dropped on the floor.
  */
 export function cleanEvent(body) {
@@ -45,9 +45,24 @@ export function cleanEvent(body) {
     throw fail(400, 'bad_request', 'That location is not on Earth.');
   }
 
-  const durationMs = num(body.durationMs);
-  if (!(durationMs >= MIN_EVENT_MS && durationMs <= MAX_EVENT_MS)) {
+  const duration = num(body.durationMs);
+  if (!(duration >= MIN_EVENT_MS && duration <= MAX_EVENT_MS)) {
     throw fail(400, 'bad_duration', 'Events last between 5 minutes and 7 days.');
+  }
+  const durationMs = Math.round(duration);
+
+  // When the plan actually begins. Optional — most events start the moment
+  // they go up — and sent as an OFFSET from now rather than a timestamp, so a
+  // device whose clock is minutes off still gets the time its owner picked
+  // (see js/app.js). Bounded by the duration in both directions: an event may
+  // not begin before it exists, nor after it has already left the map.
+  let startInMs = null;
+  if (body.startInMs != null) {
+    const start = num(body.startInMs);
+    if (!(start >= 0 && start <= durationMs)) {
+      throw fail(400, 'bad_start', 'An event cannot start after it leaves the map.');
+    }
+    startInMs = Math.round(start);
   }
 
   return {
@@ -56,6 +71,7 @@ export function cleanEvent(body) {
     // recompute a geohash, so a mismatched `g4` was a real way to hide events
     // from the viewport query — that hole closes by simply not asking.
     g4: geohash4(lat, lng),
-    durationMs: Math.round(durationMs),
+    durationMs,
+    startInMs,
   };
 }

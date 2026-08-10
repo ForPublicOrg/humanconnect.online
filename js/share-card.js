@@ -319,19 +319,61 @@ const MEDALLION = 108;   // #detail-emoji, 54px doubled
 const GUTTER = 28;       // .detail-top gap, 14px doubled
 const BTN_H = 102;       // 15px padding + 16px text, doubled
 
+const META_SIZE = 27;     // .detail-meta font-size, 13.5px doubled
+const META_GAP = 28;      // its column-gap, 14px doubled
+const META_ROW_GAP = 12;  // its row-gap, 6px doubled
+
+// The pieces of .detail-meta, in DOM order and with the weights the stylesheet
+// gives them: the join count in emerald, the start time carrying more ink than
+// the countdown beside it. A start time is optional, so this list is too.
+function metaSegments(meta, pal) {
+  return [
+    { text: meta.joinsText, font: `700 ${META_SIZE}px ${SANS}`, fill: pal.accentDeep },
+    { text: meta.startsText, font: `600 ${META_SIZE}px ${SANS}`, fill: pal.ink },
+    { text: meta.endsText, font: `500 ${META_SIZE}px ${SANS}`, fill: pal.inkSoft },
+  ].filter((s) => s.text);
+}
+
+// .detail-meta is a wrapping flex row, so this wraps too — three pieces don't
+// always fit beside a medallion, and pushing the countdown off the edge of a
+// published image is not an option.
+function layoutMeta(ctx, segs, maxW) {
+  const lines = [[]];
+  let used = 0;
+  for (const seg of segs) {
+    ctx.font = seg.font;
+    const w = ctx.measureText(seg.text).width;
+    const line = lines[lines.length - 1];
+    if (line.length && used + META_GAP + w > maxW) {
+      lines.push([{ ...seg, w }]);
+      used = w;
+    } else {
+      line.push({ ...seg, w });
+      used += (line.length > 1 ? META_GAP : 0) + w;
+    }
+  }
+  return lines;
+}
+
 // Measured before anything is drawn: the sheet's height decides where the map
 // ends and where the pin has to sit to stay visible above it.
-function measureSheet(ctx, ev, { place }) {
+function measureSheet(ctx, ev, meta, pal) {
   const textX = PAD + MEDALLION + GUTTER;
   const maxW = W - textX - PAD;
   const title = fitTitle(ctx, sentence(ev.a, ev.b, ev.c), maxW);
   const titleLh = Math.round(title.size * 1.18);
 
-  let textH = title.lines.length * titleLh + 12 + 27;   // + .detail-meta
-  if (place) textH += 10 + 25;                          // + #detail-place
+  const metaLines = layoutMeta(ctx, metaSegments(meta, pal), maxW);
+  const metaH = metaLines.length * META_SIZE + (metaLines.length - 1) * META_ROW_GAP;
+
+  let textH = title.lines.length * titleLh + 12 + metaH;  // + .detail-meta
+  if (meta.place) textH += 10 + 25;                       // + #detail-place
   const headH = Math.max(MEDALLION, textH);
 
-  return { title, titleLh, textX, maxW, textH, headH, height: PAD + headH + 32 + BTN_H + PAD };
+  return {
+    title, titleLh, textX, maxW, metaLines, textH, headH,
+    height: PAD + headH + 32 + BTN_H + PAD,
+  };
 }
 
 function drawSheet(ctx, ev, meta, m, top, pal) {
@@ -378,14 +420,18 @@ function drawSheet(ctx, ev, meta, m, top, pal) {
   }
   y += 12 + 6;
 
-  // .detail-meta — the join count in emerald, the countdown beside it
-  ctx.font = `700 27px ${SANS}`;
-  ctx.fillStyle = pal.accentDeep;
-  ctx.fillText(meta.joinsText, m.textX, y);
-  const jw = ctx.measureText(meta.joinsText).width;
-  ctx.font = `500 27px ${SANS}`;
-  ctx.fillStyle = pal.inkSoft;
-  ctx.fillText(`   ${meta.endsText}`, m.textX + jw, y);
+  // .detail-meta — the join count, when it starts, and the countdown, laid out
+  // on however many lines they need.
+  m.metaLines.forEach((line, i) => {
+    if (i) y += META_SIZE + META_ROW_GAP;
+    let x = m.textX;
+    for (const seg of line) {
+      ctx.font = seg.font;
+      ctx.fillStyle = seg.fill;
+      ctx.fillText(seg.text, x, y);
+      x += seg.w + META_GAP;
+    }
+  });
 
   // #detail-place — the address and its ↗, exactly as the sheet has it
   if (meta.place) {
@@ -462,9 +508,9 @@ function roundRect(ctx, x, y, w, h, r) {
 /**
  * Draw the share card for an event.
  * @param ev    the event ({a,b,c,lat,lng,joins})
- * @param meta  the strings currently on screen — joinsText, endsText, place,
- *              joinLabel, shareLabel, liveCount — so the picture and the app
- *              can never disagree.
+ * @param meta  the strings currently on screen — joinsText, startsText,
+ *              endsText, place, joinLabel, shareLabel, liveCount — so the
+ *              picture and the app can never disagree.
  * @returns {Promise<HTMLCanvasElement>}
  */
 export async function renderShareCard(ev, meta = {}) {
@@ -486,7 +532,7 @@ export async function renderShareCard(ev, meta = {}) {
   // Lay the sheet out first: it decides how much map is visible, and the pin
   // has to land in that strip rather than behind the sheet — the same rule
   // flyToEvent() follows on the live map.
-  const m = measureSheet(ctx, ev, meta);
+  const m = measureSheet(ctx, ev, meta, pal);
   const sheetTop = H - m.height;
   const pinY = Math.round(sheetTop * 0.46);
 

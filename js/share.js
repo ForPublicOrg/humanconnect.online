@@ -79,7 +79,7 @@ function wire() {
 /**
  * Build the card, then open the share sheet.
  * @param ev        the event
- * @param meta      { url, title, text, joinsText, endsText, place }
+ * @param meta      { url, title, text, joinsText, startsText, endsText, place }
  * @param handlers  { openSheet, toast } from app.js
  */
 export async function openShare(ev, meta, handlers) {

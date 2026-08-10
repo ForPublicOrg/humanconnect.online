@@ -37,7 +37,11 @@ export default handler(async (req, body) => {
     "You've put up a few events already — give it a little while.",
   );
 
-  const expiresAt = Timestamp.fromMillis(Date.now() + ev.durationMs);
+  // One clock reading for both stamps, so a start time validated against the
+  // duration can't drift past the expiry it was measured against.
+  const now = Date.now();
+  const expiresAt = Timestamp.fromMillis(now + ev.durationMs);
+  const startAt = ev.startInMs == null ? null : Timestamp.fromMillis(now + ev.startInMs);
   const evRef = store.collection('events').doc();
   const secret = newOwnerSecret();
 
@@ -48,6 +52,10 @@ export default handler(async (req, body) => {
     g4: ev.g4,
     joins: 0,
     created: FieldValue.serverTimestamp(),
+    // Absent unless the creator picked a time. Validation guarantees
+    // startAt <= expiresAt, so nothing on the map is scheduled for after it
+    // has gone.
+    ...(startAt ? { startAt } : {}),
     expiresAt,
   });
   batch.set(evRef.collection('priv').doc('owner'), {
@@ -64,5 +72,10 @@ export default handler(async (req, body) => {
     throw fail(503, 'write_failed', 'Could not save the event — please try again.');
   }
 
-  return { id: evRef.id, secret, expiresAt: expiresAt.toMillis() };
+  return {
+    id: evRef.id,
+    secret,
+    expiresAt: expiresAt.toMillis(),
+    startAt: startAt ? startAt.toMillis() : null,
+  };
 });

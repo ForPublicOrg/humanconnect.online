@@ -191,6 +191,12 @@
       <p class="field-label">Stays on the map for</p>
       <div class="chip-row" id="duration-chips"></div>
 
+      <p class="field-label">Starts <span class="opt">· optional, within that time</span></p>
+      <div class="chip-row" id="start-chips"></div>
+      <input class="time-input" id="start-at" type="datetime-local" hidden
+             aria-label="Exact start time" />
+      <p class="field-note" id="start-note" role="status" hidden></p>
+
       <button class="cta" id="create-btn" disabled>Put it on the map</button>
     </div>
   </section>
@@ -204,6 +210,7 @@
           <h2 id="detail-title">Event</h2>
           <div class="detail-meta">
             <span id="detail-joins"></span>
+            <span id="detail-starts" hidden></span>
             <span id="detail-ends"></span>
           </div>
           <a id="detail-place" target="_blank" rel="noopener"></a>

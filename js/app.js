@@ -7,7 +7,7 @@ import {
   sentence, activityEmoji, activityColor, isValidCombo,
 } from './words.js?v=msmfhh75';
 import {
-  DURATIONS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL,
+  DURATIONS, START_PRESETS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL,
 } from './config.js?v=msmfhh75';
 import { createStore } from './store.js?v=msmfhh75';
 import { buildMap, pinDiameter } from './map-engine.js?v=msmfhh75';
@@ -144,6 +144,10 @@ function writeError(err, fallback) {
         : err.message;
     case 'network_cap':
       return 'This connection has already joined this event.';
+    case 'bad_start':
+      // The sheet clamps to the same rule, so this only surfaces when a draft
+      // sat open long enough to drift — say what to do about it.
+      return 'That start time is after the event leaves the map — pick a sooner time, or a longer stay.';
     case 'verification_unconfigured':
     case 'server_unconfigured':
       return 'Not switched on yet — check back soon.';
@@ -419,7 +423,15 @@ document.querySelectorAll('[data-close]').forEach((btn) => {
 // ---------------------------------------------------------------------------
 // Create flow
 // ---------------------------------------------------------------------------
-const draft = { a: -1, b: -1, c: -1, durationMs: DURATIONS[1].ms, latlng: null };
+// startAtMs is the absolute time the creator picked (null = "right now", the
+// default). startPreset remembers WHICH chip produced it, so the right one
+// stays lit while the clock moves underneath.
+const draft = {
+  a: -1, b: -1, c: -1,
+  durationMs: DURATIONS[1].ms,
+  startAtMs: null, startPreset: null,
+  latlng: null,
+};
 let draftPin = null;
 
 function removeDraftPin() {
@@ -429,6 +441,8 @@ function removeDraftPin() {
 function startCreate(latlng) {
   draft.a = -1; draft.b = -1; draft.c = -1;
   draft.durationMs = DURATIONS[1].ms;
+  draft.startAtMs = null; draft.startPreset = null;
+  startNotice = '';
   draft.latlng = latlng;
 
   removeDraftPin();
@@ -467,6 +481,7 @@ function buildCreateSheet() {
   renderActivityGrid('');
   renderChipRow($('#format-chips'), FORMATS, () => draft.c, (i) => { draft.c = draft.c === i ? -1 : i; refreshCreate(); });
   renderDurations();
+  renderStarts();
   $('#activity-search').value = '';
   refreshCreate();
 }
@@ -508,10 +523,121 @@ function renderDurations() {
     const chip = el('button', 'chip', d.label);
     chip.type = 'button';
     if (draft.durationMs === d.ms) chip.classList.add('sel');
-    chip.addEventListener('click', () => { draft.durationMs = d.ms; renderDurations(); });
+    chip.addEventListener('click', () => {
+      draft.durationMs = d.ms;
+      // Shortening the stay can strand a start time outside it. Clear it and
+      // say so rather than quietly sliding the plan to a time nobody chose.
+      // The notice explains *this* tap, so it never outlives it.
+      startNotice = '';
+      if (draft.startAtMs != null && draft.startAtMs > startLimit()) {
+        startNotice = `Start time cleared — ${d.label} on the map doesn't reach it.`;
+        draft.startAtMs = null;
+        draft.startPreset = null;
+      }
+      renderDurations();
+      renderStarts();
+    });
     row.appendChild(chip);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Start time
+//
+// Optional — most plans begin the moment they go up — and bounded by the
+// duration: an event may not start after it has already left the map. The
+// chips shrink with the duration so the rule is visible rather than an error
+// you hit; the native picker covers everything they don't.
+// ---------------------------------------------------------------------------
+let startNotice = ''; // one-shot explanation of a time we changed for them
+
+const startLimit = () => Date.now() + draft.durationMs;
+
+// <input type="datetime-local"> speaks local wall-clock with no zone, so shift
+// the epoch by the offset before slicing an ISO string out of it.
+const toLocalInput = (ms) =>
+  new Date(ms - new Date(ms).getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+
+function setStart(atMs, preset = null) {
+  draft.startAtMs = atMs;
+  draft.startPreset = preset;
+  renderStarts();
+}
+
+function renderStarts() {
+  const row = $('#start-chips');
+  const input = $('#start-at');
+  const note = $('#start-note');
+  const custom = draft.startAtMs != null && draft.startPreset == null;
+
+  row.replaceChildren();
+  const chip = (label, sel, onTap) => {
+    const b = el('button', 'chip', label);
+    b.type = 'button';
+    if (sel) b.classList.add('sel');
+    b.addEventListener('click', onTap);
+    row.appendChild(b);
+  };
+
+  chip('Right now', draft.startAtMs == null, () => { startNotice = ''; setStart(null); });
+  for (const p of START_PRESETS) {
+    if (p.ms > draft.durationMs) continue;
+    chip(p.label, draft.startPreset === p.ms, () => {
+      startNotice = '';
+      setStart(Date.now() + p.ms, p.ms);
+    });
+  }
+  chip('Pick a time…', custom, openStartPicker);
+
+  input.hidden = !custom;
+  input.min = toLocalInput(Date.now());
+  input.max = toLocalInput(startLimit());
+  if (custom) input.value = toLocalInput(draft.startAtMs);
+
+  // The same sentence the detail sheet will show, so what you set is what you
+  // (and everyone else) will read back.
+  const said = [];
+  if (draft.startAtMs != null) said.push(`Starts ${fmtClock(draft.startAtMs)}.`);
+  if (startNotice) said.push(startNotice);
+  note.textContent = said.join(' ');
+  note.hidden = !said.length;
+  note.classList.toggle('warn', !!startNotice);
+}
+
+function openStartPicker() {
+  startNotice = '';
+  // Seed the field with the next round half-hour — how people actually name a
+  // meeting time — without ever offering one past the event's last moment.
+  const seed = draft.startAtMs
+    ?? Math.min(Math.ceil((Date.now() + 60e3) / 1800e3) * 1800e3, startLimit());
+  setStart(seed, null);
+  const input = $('#start-at');
+  input.focus();
+  // Not every browser has it, and it throws where it isn't allowed — the field
+  // is still typeable either way.
+  try { input.showPicker?.(); } catch { /* the field itself is the fallback */ }
+}
+
+$('#start-at').addEventListener('change', (e) => {
+  const raw = e.target.value;
+  if (!raw) { startNotice = ''; setStart(null); return; }
+  const picked = new Date(raw).getTime(); // no zone in the string ⇒ local time
+  if (!Number.isFinite(picked)) { startNotice = ''; setStart(null); return; }
+
+  const limit = startLimit();
+  if (picked > limit) {
+    startNotice = "An event can't start after it leaves the map — moved to its last moment.";
+    setStart(limit, null);
+  } else if (picked <= Date.now()) {
+    // The field only has minute resolution, so picking the current minute is a
+    // request to start now, not a mistake worth explaining.
+    startNotice = Date.now() - picked >= 60e3 ? 'That time has passed — starting right now.' : '';
+    setStart(null);
+  } else {
+    startNotice = '';
+    setStart(picked, null);
+  }
+});
 
 function refreshCreate() {
   // Re-render selections
@@ -554,6 +680,13 @@ $('#create-btn').addEventListener('click', async () => {
       a: draft.a, b: draft.b, c: draft.c,
       lat: draft.latlng.lat, lng: draft.latlng.lng,
       durationMs: draft.durationMs,
+      // Sent as an offset from now, not a timestamp: the server owns the clock,
+      // so a device running minutes fast still gets the time its owner picked.
+      // Clamped because the sheet may have sat open long enough to drift past
+      // the chosen moment, or past the window itself.
+      startInMs: draft.startAtMs == null
+        ? null
+        : Math.min(Math.max(0, draft.startAtMs - Date.now()), draft.durationMs),
     });
     owned.set(id, secret ?? null);
     saveOwned();
@@ -619,11 +752,43 @@ function fmtRemaining(ms) {
   return `${s % 60}s`;
 }
 
+// Wall-clock time, with only as much date as it takes to be unambiguous — a
+// plan can be set a week out, so "6:30 pm" alone doesn't always say which day.
+// Rendered in the *reader's* zone, which is the right answer: you go to an
+// event where you are.
+const TIME_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const DAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+function fmtClock(ms) {
+  const d = new Date(ms);
+  const time = TIME_FMT.format(d);
+  // Calendar days apart, not elapsed hours — 11pm to 1am is "tomorrow". Round,
+  // because a DST shift makes a day 23 or 25 hours long.
+  const days = Math.round((midnight(d) - midnight(new Date())) / 864e5);
+  if (days === 0) return time;
+  if (days === 1) return `tomorrow ${time}`;
+  if (days === -1) return `yesterday ${time}`;
+  return `${DAY_FMT.format(d)} ${time}`;
+}
+
 const fmtJoins = (joins) =>
   joins === 0 ? 'Be the first to join' :
   joins === 1 ? '1 person joining' : `${joins} people joining`;
 
 const fmtEnds = (ev) => `Ends in ${fmtRemaining(ev.expiresAt - Date.now())}`;
+
+// Empty for events with no time set — most of them, and every event created
+// before start times existed.
+const fmtStarts = (ev) =>
+  ev.startAt == null ? '' :
+  ev.startAt <= Date.now() ? `Started ${fmtClock(ev.startAt)}` : `Starts ${fmtClock(ev.startAt)}`;
+
+function paintStarts(ev) {
+  const node = $('#detail-starts');
+  node.textContent = fmtStarts(ev);
+  node.hidden = !node.textContent;
+}
 
 function fillDetail(ev) {
   if (!ev) return;
@@ -631,6 +796,7 @@ function fillDetail(ev) {
   $('#detail-emoji').style.setProperty('--ring', activityColor(ev.b));
   $('#detail-title').textContent = sentence(ev.a, ev.b, ev.c);
   $('#detail-joins').textContent = fmtJoins(ev.joins);
+  paintStarts(ev);
   $('#detail-ends').textContent = fmtEnds(ev);
   $('#detail-mine').hidden = !owned.has(ev.id);
 
@@ -695,7 +861,8 @@ function openDetail(id, fallback) {
   countdownTimer = setInterval(() => {
     const cur = events.get(detailId) ?? (detailId ? detailCache : null);
     if (!cur) { clearInterval(countdownTimer); return; }
-    $('#detail-ends').textContent = `Ends in ${fmtRemaining(cur.expiresAt - Date.now())}`;
+    $('#detail-ends').textContent = fmtEnds(cur);
+    paintStarts(cur); // so "Starts" becomes "Started" the moment it does
   }, 1000);
 }
 
@@ -755,6 +922,7 @@ $('#share-btn').addEventListener('click', async () => {
       // Read off the screen, not re-derived: the card is a picture of what
       // the user is looking at, down to the button labels.
       joinsText: fmtJoins(ev.joins),
+      startsText: $('#detail-starts').textContent,
       endsText: fmtEnds(ev),
       place: $('#detail-place').textContent,
       joinLabel: $('#join-btn').textContent,
