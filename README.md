@@ -216,7 +216,7 @@ line and replace the file — nothing else changes.
 ## How the safety model works
 
 Clients can **read** Firestore and nothing else — [firestore.rules](firestore.rules)
-denies every client write. Creating, joining and removing go through
+denies every client write. Creating, joining, editing and removing go through
 [api/](api), which is where all of this is enforced.
 
 | Threat | Defense |
@@ -225,8 +225,8 @@ denies every client write. Creating, joining and removing go through
 | Scripted floods | Every create and join needs a fresh, single-use Cloudflare Turnstile token, verified server-side before Firestore is touched at all. Automation pays a solved challenge per write. |
 | Unlimited event creation | 6 events per day per network, behind a 2-minute cooldown — counted in Firestore against a hash of the caller's address, not in localStorage. |
 | Join-count inflation | A join is recorded against `events/{id}/joiners/{networkHash}` before the counter moves. A repeat from the same device is idempotent; a *new* device on the same connection is allowed up to 8 per event, then refused. Opening incognito changes the device, never the network. |
-| Deleting other people's events | `/api/create` returns a 24-byte secret that exists only in the creator's browser; only its HMAC is stored, in a subdocument no client can read. `/api/remove` compares in constant time. The public event doc still carries no identifier, so scrapers can't link one person's events into a movement profile. |
-| Events that never expire | The API clamps `expiresAt` to 7 days and sets it itself; TTL erases them after expiry. |
+| Deleting or editing other people's events | `/api/create` returns a 24-byte secret that exists only in the creator's browser; only its HMAC is stored, in a subdocument no client can read. `/api/remove` and `/api/update` compare in constant time. The public event doc still carries no identifier, so scrapers can't link one person's events into a movement profile. |
+| Events that never expire | The API clamps `expiresAt` to 7 days and sets it itself; TTL erases them after expiry. Editing an event re-measures its stay from the moment it was *first placed* — extending "2 days" to "7 days" buys the five that were left, never a fresh seven. |
 | Start times outside the event | `startAt` is sent as an *offset* from now, never a timestamp, and rejected unless it lands between 0 and the duration. The server adds it to its own clock, so a wrong device clock can't place an event outside its window — or outside the 7-day ceiling. |
 | Junk documents / extra fields | The API constructs the document from scratch out of validated fields only. Anything else in the request body is dropped, including `g4` and `joins`. |
 | Hidden events (`g4` spoofing) | `g4` is computed server-side from the coordinates, so it can no longer disagree with them. |

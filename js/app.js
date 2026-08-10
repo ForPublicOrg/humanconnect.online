@@ -148,6 +148,10 @@ function writeError(err, fallback) {
       // The sheet clamps to the same rule, so this only surfaces when a draft
       // sat open long enough to drift — say what to do about it.
       return 'That start time is after the event leaves the map — pick a sooner time, or a longer stay.';
+    case 'bad_duration':
+      // Only reachable from an edit: the stay is measured from placement, and
+      // the sheet sat open long enough for the picked one to fully elapse.
+      return 'The event has already been up longer than that — pick a longer stay.';
     case 'verification_unconfigured':
     case 'server_unconfigured':
       return 'Not switched on yet — check back soon.';
@@ -401,13 +405,14 @@ function dismissSheets() {
   document.querySelectorAll('.sheet.open').forEach(hideSheet);
   removeDraftPin();
   detailId = null;
+  editing = null;
 }
 
 // Programmatic open: close only the *other* sheet, keep this one's state.
 function openSheet(sheet) {
   if (!sheet.classList.contains('open')) sheetInvoker = document.activeElement;
   document.querySelectorAll('.sheet.open').forEach((s) => { if (s !== sheet) hideSheet(s); });
-  if (sheet.id === 'detail-sheet') removeDraftPin(); // opening details cancels a draft
+  if (sheet.id === 'detail-sheet') { removeDraftPin(); editing = null; } // details cancel a draft/edit
   if (sheet.id === 'create-sheet') detailId = null;
   sheet.inert = false;
   sheet.classList.add('open');
@@ -434,11 +439,21 @@ const draft = {
 };
 let draftPin = null;
 
+// Non-null while the create sheet is EDITING an existing event instead of
+// composing a new one: { id, createdAt }. The 7-day ceiling stays anchored at
+// createdAt — editing never restarts the clock (see api/update.js).
+let editing = null;
+// Only a start time the user actually touched is sent on save; untouched, the
+// server keeps what's there (an offset-from-now can't express a past start).
+let startTouched = false;
+
 function removeDraftPin() {
   if (draftPin) { draftPin.remove(); draftPin = null; }
 }
 
 function startCreate(latlng) {
+  editing = null;
+  startTouched = false;
   draft.a = -1; draft.b = -1; draft.c = -1;
   draft.durationMs = DURATIONS[1].ms;
   draft.startAtMs = null; draft.startPreset = null;
@@ -458,12 +473,39 @@ function startCreate(latlng) {
   draftPin.on('dragend', () => { draft.latlng = draftPin.getLatLng().wrap(); });
 
   buildCreateSheet();
+  $('#create-btn').textContent = 'Put it on the map';
   openSheet($('#create-sheet'));
   panDraftAboveSheet(latlng);
   dismissOnboarding();
   // Fetch and render Turnstile while the user is still picking words, so the
   // human check is already warm by the time they hit the button.
   warmTurnstile('create');
+}
+
+// Reuse the create sheet to edit an event this browser owns. Words, stay and
+// start time are editable; the pin is not — the place is the event, and
+// moving it under people who already joined would make it a lie. No Turnstile
+// warm-up: /api/update takes the owner secret as proof, like remove.
+function startEdit(ev) {
+  editing = { id: ev.id, createdAt: ev.createdAt };
+  startTouched = false;
+  startNotice = '';
+  draft.a = ev.a; draft.b = ev.b; draft.c = ev.c;
+  draft.latlng = null;
+  // The stored stay is created→expiry; snap it to the chip that produced it
+  // (the server's creation stamp lands a breath after the clock reading that
+  // set the expiry, so exact equality would miss every time).
+  const stay = ev.expiresAt - ev.createdAt;
+  draft.durationMs = DURATIONS.reduce((best, d) =>
+    Math.abs(d.ms - stay) < Math.abs(best - stay) ? d.ms : best, DURATIONS[0].ms);
+  // A start already behind us shows as "Right now" unselected-ness; saving
+  // without touching the row keeps it (see startTouched above).
+  draft.startAtMs = ev.startAt != null && ev.startAt > Date.now() ? ev.startAt : null;
+  draft.startPreset = null;
+  removeDraftPin();
+  buildCreateSheet();
+  $('#create-btn').textContent = 'Save changes';
+  openSheet($('#create-sheet'));
 }
 
 // Slide the map so the draft pin sits in the visible strip ABOVE the bottom
@@ -520,6 +562,10 @@ function renderDurations() {
   const row = $('#duration-chips');
   row.replaceChildren();
   DURATIONS.forEach((d) => {
+    // Editing: the chips still mean TOTAL time on the map, measured from when
+    // the event was first placed — options the event has already outlived
+    // would expire it on the spot, so they aren't offered.
+    if (editing && editing.createdAt + d.ms <= Date.now()) return;
     const chip = el('button', 'chip', d.label);
     chip.type = 'button';
     if (draft.durationMs === d.ms) chip.classList.add('sel');
@@ -551,7 +597,9 @@ function renderDurations() {
 // ---------------------------------------------------------------------------
 let startNotice = ''; // one-shot explanation of a time we changed for them
 
-const startLimit = () => Date.now() + draft.durationMs;
+// The last moment the event will exist: for a new event the stay runs from
+// now; for an edit it runs from when the event was first placed.
+const startLimit = () => (editing ? editing.createdAt : Date.now()) + draft.durationMs;
 
 // <input type="datetime-local"> speaks local wall-clock with no zone, so shift
 // the epoch by the offset before slicing an ISO string out of it.
@@ -559,6 +607,7 @@ const toLocalInput = (ms) =>
   new Date(ms - new Date(ms).getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
 
 function setStart(atMs, preset = null) {
+  startTouched = true;
   draft.startAtMs = atMs;
   draft.startPreset = preset;
   renderStarts();
@@ -581,7 +630,9 @@ function renderStarts() {
 
   chip('Right now', draft.startAtMs == null, () => { startNotice = ''; setStart(null); });
   for (const p of START_PRESETS) {
-    if (p.ms > draft.durationMs) continue;
+    // Presets are offsets from NOW; while editing, the window they must land
+    // inside is measured from the original placement, so compare absolutes.
+    if (Date.now() + p.ms > startLimit()) continue;
     chip(p.label, draft.startPreset === p.ms, () => {
       startNotice = '';
       setStart(Date.now() + p.ms, p.ms);
@@ -663,7 +714,43 @@ function refreshCreate() {
   btn.disabled = !valid;
 }
 
+// Save an edit: same sheet, different write. No client cooldown — it's their
+// own event, and /api/update has its own limiter.
+async function saveEdit() {
+  const { id, createdAt } = editing;
+  if (!isValidCombo(draft.a, draft.b, draft.c)) return;
+  const btn = $('#create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    await store.update({
+      id, secret: owned.get(id),
+      a: draft.a, b: draft.b, c: draft.c,
+      durationMs: draft.durationMs,
+      // Only when the user touched the start row — omitted, the server keeps
+      // the time already set. Clamped like create: the sheet may have sat
+      // open long enough for the chosen moment to drift past.
+      ...(startTouched ? {
+        startInMs: draft.startAtMs == null
+          ? null
+          : Math.min(Math.max(0, draft.startAtMs - Date.now()),
+                     Math.max(0, createdAt + draft.durationMs - Date.now())),
+      } : {}),
+    });
+    dismissSheets();
+    toast('Event updated');
+  } catch (err) {
+    console.error('[humanconnect] update failed:', err);
+    if (err?.code === 'not-found') { dismissSheets(); toast('This event is gone'); return; }
+    toast(writeError(err, "Couldn't save the changes — try again"), 4500);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = editing ? 'Save changes' : 'Put it on the map';
+  }
+}
+
 $('#create-btn').addEventListener('click', async () => {
+  if (editing) return saveEdit();
   const last = lsGet('hc-last-create', 0);
   if (Date.now() - last < CREATE_COOLDOWN_MS) {
     const wait = Math.ceil((CREATE_COOLDOWN_MS - (Date.now() - last)) / 1000);
@@ -709,6 +796,7 @@ $('#create-btn').addEventListener('click', async () => {
 let tapTimer = null;
 function handleMapTap(ll) {
   if ($('#create-sheet').classList.contains('open')) {
+    if (editing) return; // an edit is tied to its pin — taps don't move it
     draft.latlng = ll;
     draftPin?.setLatLng(ll);
     panDraftAboveSheet(ll);
@@ -807,6 +895,10 @@ function fillDetail(ev) {
   const rm = $('#remove-btn');
   rm.hidden = !owned.get(ev.id);
   if (rm.dataset.arm) { delete rm.dataset.arm; rm.textContent = 'Remove this event'; }
+  // Edit additionally needs the placement time — the anchor of the 7-day
+  // ceiling — which the snapshot echoes back as createdAt a moment after
+  // creating.
+  $('#edit-btn').hidden = !owned.get(ev.id) || ev.createdAt == null;
 
   const btn = $('#join-btn');
   if (joined.has(ev.id)) {
@@ -935,6 +1027,12 @@ $('#share-btn').addEventListener('click', async () => {
   }
 });
 
+$('#edit-btn').addEventListener('click', () => {
+  if (!detailId) return;
+  const ev = rawEvents.get(detailId) ?? detailCache;
+  if (ev && ev.createdAt != null && owned.get(ev.id)) startEdit(ev);
+});
+
 // Deleting is irreversible, so arm-then-confirm: first tap changes the label,
 // second tap within the same view actually removes. Any re-render disarms.
 $('#remove-btn').addEventListener('click', async () => {
@@ -1054,6 +1152,7 @@ let store = {
   get: async () => null,
   create: async () => { throw new Error('store not ready'); },
   join: async () => { throw new Error('store not ready'); },
+  update: async () => { throw new Error('store not ready'); },
   remove: async () => { throw new Error('store not ready'); },
 };
 deliver = renderEvents;

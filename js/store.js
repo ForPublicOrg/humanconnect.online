@@ -4,11 +4,12 @@
 //   store.mode                     'live' (Firestore) | 'demo' (this browser)
 //   store.create({a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret}>
 //   store.join(id)                 -> Promise<{already}>
+//   store.update({id,secret,a,b,c,durationMs,startInMs?}) -> Promise<{expiresAt,startAt}>
 //   store.remove(id, secret)       -> Promise<void>
 //
 // Both push the full list of live events to onEvents(list) whenever anything
-// changes. Event shape: { id, a, b, c, lat, lng, joins, startAt, expiresAt }
-// with startAt and expiresAt in epoch milliseconds. startAt is null when the
+// changes. Event shape: { id, a, b, c, lat, lng, joins, createdAt, startAt,
+// expiresAt } with times in epoch milliseconds. startAt is null when the
 // creator didn't pick a time; when set it is never after expiresAt.
 //
 // READS come straight from Firestore, live, exactly as before. WRITES go
@@ -217,6 +218,10 @@ async function createFirestoreStore(onEvents, initialCells) {
       // can't be mistaken for 1970.
       startAt: v.startAt?.toMillis?.() ?? null,
       expiresAt: v.expiresAt?.toMillis?.() ?? 0,
+      // The anchor of the 7-day ceiling — editing measures the stay from
+      // here, never from "now". Null for a beat right after creating (the
+      // serverTimestamp hasn't echoed back yet), which just hides Edit.
+      createdAt: v.created?.toMillis?.() ?? null,
     };
   };
 
@@ -317,6 +322,13 @@ async function createFirestoreStore(onEvents, initialCells) {
       return withToken('join', (token) =>
         apiPost('/api/join', { id, token, device: deviceId() }));
     },
+    // Owner-only, like remove: the secret is the proof, no Turnstile needed.
+    // startInMs is tri-state — omit the key to keep the current start time,
+    // null to clear it, a number (offset from now) to set a new one.
+    // durationMs is the TOTAL stay; the server anchors it at creation time.
+    async update(payload) {
+      return apiPost('/api/update', payload);
+    },
     // Owner-only: the server compares a hash of this secret against the one
     // stored when the event was created.
     async remove(id, secret) {
@@ -372,6 +384,7 @@ function createDemoStore(onEvents, seedCenter) {
         id, a, b, c, lat, lng,
         g4: geohash4(lat, lng),
         joins: 0,
+        createdAt: now,
         startAt: startInMs == null ? null : now + startInMs,
         expiresAt: now + durationMs,
       }));
@@ -389,6 +402,25 @@ function createDemoStore(onEvents, seedCenter) {
       // "You're in ✓" rolls back instead of persisting against nothing.
       if (!found) { const err = new Error('event gone'); err.code = 'not-found'; throw err; }
       return { already: false };
+    },
+    // Same rules as the API: the stay is anchored at creation, and a start
+    // time stranded past the new expiry is cleared, not kept.
+    async update({ id, a, b, c, durationMs, startInMs }) {
+      const now = Date.now();
+      let out = null;
+      mutate((list) => {
+        const ev = list.find((e) => e.id === id);
+        if (!ev || ev.createdAt == null) return;
+        const expiresAt = ev.createdAt + durationMs;
+        if (expiresAt <= now) return;
+        ev.a = a; ev.b = b; ev.c = c;
+        ev.expiresAt = expiresAt;
+        if (startInMs !== undefined) ev.startAt = startInMs == null ? null : now + startInMs;
+        if (ev.startAt != null && ev.startAt > expiresAt) ev.startAt = null;
+        out = { expiresAt: ev.expiresAt, startAt: ev.startAt };
+      });
+      if (!out) { const err = new Error('event gone'); err.code = 'not-found'; throw err; }
+      return out;
     },
     // Demo has no server identity — the UI's own "mine" tracking is the gate.
     async remove(id) {

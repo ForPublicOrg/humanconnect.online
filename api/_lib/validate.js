@@ -27,11 +27,8 @@ export function assertEventId(id) {
   return id;
 }
 
-/**
- * Turn an untrusted body into exactly the fields an event document may
- * contain. Anything else the caller sent is dropped on the floor.
- */
-export function cleanEvent(body) {
+/** Words + stay: the part of an event's shape shared by create and update. */
+function cleanWordsAndStay(body) {
   const a = int(body.a);
   const b = int(body.b);
   const c = int(body.c);
@@ -39,17 +36,27 @@ export function cleanEvent(body) {
     throw fail(400, 'bad_words', 'Event names must be 2–3 words from the built-in lists.');
   }
 
+  const duration = num(body.durationMs);
+  if (!(duration >= MIN_EVENT_MS && duration <= MAX_EVENT_MS)) {
+    throw fail(400, 'bad_duration', 'Events last between 5 minutes and 7 days.');
+  }
+
+  return { a, b, c, durationMs: Math.round(duration) };
+}
+
+/**
+ * Turn an untrusted body into exactly the fields an event document may
+ * contain. Anything else the caller sent is dropped on the floor.
+ */
+export function cleanEvent(body) {
+  const fields = cleanWordsAndStay(body);
+  const { durationMs } = fields;
+
   const lat = num(body.lat);
   const lng = num(body.lng);
   if (!(lat >= -90 && lat <= 90) || !(lng >= -180 && lng <= 180)) {
     throw fail(400, 'bad_request', 'That location is not on Earth.');
   }
-
-  const duration = num(body.durationMs);
-  if (!(duration >= MIN_EVENT_MS && duration <= MAX_EVENT_MS)) {
-    throw fail(400, 'bad_duration', 'Events last between 5 minutes and 7 days.');
-  }
-  const durationMs = Math.round(duration);
 
   // When the plan actually begins. Optional — most events start the moment
   // they go up — and sent as an OFFSET from now rather than a timestamp, so a
@@ -66,12 +73,36 @@ export function cleanEvent(body) {
   }
 
   return {
-    a, b, c, lat, lng,
+    ...fields, lat, lng,
     // Computed here, never taken from the client. The old rules could not
     // recompute a geohash, so a mismatched `g4` was a real way to hide events
     // from the viewport query — that hole closes by simply not asking.
     g4: geohash4(lat, lng),
-    durationMs,
     startInMs,
   };
+}
+
+/**
+ * The editable half of an event, for /api/update. Location is absent on
+ * purpose — the place IS the event; moving the pin under people who already
+ * joined would make it a lie. startInMs is tri-state: absent = keep the
+ * current start time, null = clear it, a number = new offset from now.
+ * Whether the result still fits inside the event's ORIGINAL window is checked
+ * in api/update.js, where the creation time is known.
+ */
+export function cleanEventPatch(body) {
+  const fields = cleanWordsAndStay(body);
+
+  let startInMs; // undefined = keep whatever the event already has
+  if (body.startInMs === null) {
+    startInMs = null;
+  } else if (body.startInMs !== undefined) {
+    const start = num(body.startInMs);
+    if (!(start >= 0 && start <= fields.durationMs)) {
+      throw fail(400, 'bad_start', 'An event cannot start after it leaves the map.');
+    }
+    startInMs = Math.round(start);
+  }
+
+  return { ...fields, startInMs };
 }

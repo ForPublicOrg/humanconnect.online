@@ -22,6 +22,18 @@ export const CREATE_MAX_PER_WINDOW = 6;
 export const CREATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
+// Editing events
+// ---------------------------------------------------------------------------
+
+// Edits are owner-only (the secret is the proof, like /api/remove) so there is
+// nothing to gain from someone else's event — but unlike remove, an edit
+// WRITES content, so it still gets a budget. Generous next to real use: six
+// creates a day leaves five edits per event before the window says wait.
+export const UPDATE_COOLDOWN_MS = 10 * 1000;
+export const UPDATE_MAX_PER_WINDOW = 30;
+export const UPDATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
 // Joining events
 // ---------------------------------------------------------------------------
 
