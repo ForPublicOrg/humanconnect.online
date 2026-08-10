@@ -169,7 +169,44 @@ function toast(msg, ms = 2600) {
 // Markers — size grows with joins
 // ---------------------------------------------------------------------------
 const markers = new Map(); // id -> { marker, joins }
-let events = new Map();    // id -> event
+let rawEvents = new Map(); // id -> event exactly as the store sent it
+let events = new Map();    // id -> event as SHOWN (raw + this browser's pending join)
+
+// ---------------------------------------------------------------------------
+// Optimistic join counts
+//
+// A join is a round trip — the human check, then /api/join, then the snapshot
+// that carries the new number back. Holding the count still for all three
+// makes a successful tap look like it did nothing, so the +1 goes on screen
+// immediately and the live data takes over from there.
+//
+// `floor` is the snapshot value at which the real increment has landed, so the
+// overlay retires itself instead of counting the same join twice. A write that
+// fails takes its overlay with it and the number drops back.
+// ---------------------------------------------------------------------------
+const pendingJoins = new Map(); // id -> { delta, floor }
+
+const withPending = (ev) => {
+  const p = ev && pendingJoins.get(ev.id);
+  return p ? { ...ev, joins: ev.joins + p.delta } : ev;
+};
+
+function addPendingJoin(id) {
+  const known = rawEvents.get(id) ?? (detailCache?.id === id ? detailCache : null);
+  pendingJoins.set(id, { delta: 1, floor: (known?.joins ?? 0) + 1 });
+  paintEvents();
+}
+
+function dropPendingJoin(id) {
+  if (pendingJoins.delete(id)) paintEvents();
+}
+
+// The server's own count, once it answers — a stranger joining at the same
+// moment shouldn't keep our overlay alive past the snapshot that includes us.
+function confirmPendingJoin(id, joins) {
+  const p = pendingJoins.get(id);
+  if (p && typeof joins === 'number') p.floor = joins;
+}
 
 function pinHtml(ev) {
   const d = pinDiameter(ev.joins);
@@ -218,7 +255,20 @@ function updateMarker(entry, ev) {
 }
 
 function renderEvents(list) {
-  events = new Map(list.map((ev) => [ev.id, ev]));
+  rawEvents = new Map(list.map((ev) => [ev.id, ev]));
+  paintEvents();
+}
+
+function paintEvents() {
+  events = new Map();
+  for (const [id, ev] of rawEvents) {
+    // Retire an overlay the moment the server's own number reaches it, so the
+    // +1 is never added on top of the increment it was standing in for.
+    const p = pendingJoins.get(id);
+    if (p && ev.joins >= p.floor) pendingJoins.delete(id);
+    events.set(id, withPending(ev));
+  }
+  const list = [...events.values()];
 
   // Diff, then apply add/remove in BULK — markercluster does cluster-tree and
   // icon work per call, so hundreds of single-layer calls freeze the main
@@ -252,9 +302,11 @@ function renderEvents(list) {
     list.length === 0 ? 'No events here yet' :
     list.length === 1 ? '1 live event' : `${list.length} live events`;
 
-  if (detailId && events.has(detailId)) {
-    detailCache = events.get(detailId);
-    fillDetail(detailCache);
+  // detailCache holds the RAW event; the overlay is applied at fill time so a
+  // cached copy can't drift into showing the same pending join twice.
+  if (detailId && rawEvents.has(detailId)) {
+    detailCache = rawEvents.get(detailId);
+    fillDetail(withPending(detailCache));
   } else if (detailId) {
     // Missing from the current subscription. In DEMO mode the list is always
     // the complete dataset (no viewport scoping), so absence is authoritative
@@ -266,6 +318,10 @@ function renderEvents(list) {
       toast('This event is gone');
       detailId = null;
       detailCache = null;
+    } else {
+      // Panned away, sheet still open — the cached copy is all we have, but a
+      // join made from it must still show up in the count.
+      fillDetail(withPending(detailCache));
     }
   }
 
@@ -276,10 +332,10 @@ function renderEvents(list) {
 setInterval(() => {
   const now = Date.now();
   let changed = false;
-  for (const [id, ev] of events) {
-    if (ev.expiresAt <= now) { events.delete(id); changed = true; }
+  for (const [id, ev] of rawEvents) {
+    if (ev.expiresAt <= now) { rawEvents.delete(id); pendingJoins.delete(id); changed = true; }
   }
-  if (changed) renderEvents([...events.values()]);
+  if (changed) paintEvents();
 }, 30e3);
 
 // ---------------------------------------------------------------------------
@@ -308,7 +364,7 @@ async function resolveDeepLink(id, coords) {
   // subscription, so don't conclude "ended" from the live list alone —
   // fetch the single doc by id before giving up.
   const s = await storeP;
-  const ev = events.get(id) ?? (await s.get?.(id));
+  const ev = rawEvents.get(id) ?? (await s.get?.(id));
   if (ev && ev.expiresAt > Date.now()) {
     map.setView([ev.lat, ev.lng], Math.max(map.getZoom(), 15));
     openDetail(id, ev);
@@ -624,11 +680,11 @@ function fillPlace(ev) {
 }
 
 function openDetail(id, fallback) {
-  const ev = events.get(id) ?? fallback;
+  const ev = rawEvents.get(id) ?? fallback;
   if (!ev) return;
   detailId = id;
   detailCache = ev;
-  fillDetail(ev);
+  fillDetail(withPending(ev));
   fillPlace(ev);
   openSheet($('#detail-sheet'));
   flyToEvent(ev.lat, ev.lng);
@@ -647,18 +703,25 @@ $('#join-btn').addEventListener('click', async () => {
   if (!detailId || joined.has(detailId)) return;
   const id = detailId;
   const btn = $('#join-btn');
-  // Optimistic: mark as joined first so live snapshot re-renders can't
-  // flip the button back mid-write.
+  // Optimistic, on both counts: the button flips so live snapshot re-renders
+  // can't push it back mid-write, and the number moves now rather than a round
+  // trip later. Everything here is undone if the write doesn't land.
   joined.add(id);
   lsSet('hc-joined', [...joined]);
   btn.disabled = true;
   btn.textContent = "You're in ✓";
+  addPendingJoin(id);
   try {
-    await store.join(id);
+    const out = await store.join(id);
+    // This device was already counted (a second tab, a re-opened link): the
+    // stored number never moved, so our +1 has to come back off.
+    if (out?.already) dropPendingJoin(id);
+    else confirmPendingJoin(id, out?.joins);
   } catch (err) {
     console.error(err);
     joined.delete(id);
     lsSet('hc-joined', [...joined]);
+    dropPendingJoin(id);
     // The event was removed by its creator (or expired server-side): stop
     // showing it rather than inviting a retry that can never succeed.
     if (err?.code === 'not-found') {
@@ -667,7 +730,7 @@ $('#join-btn').addEventListener('click', async () => {
       return;
     }
     // Re-enable from the cached copy — the event may have left the viewport.
-    if (detailId === id) fillDetail(events.get(id) ?? detailCache);
+    if (detailId === id) fillDetail(withPending(rawEvents.get(id) ?? detailCache));
     toast(writeError(err, 'Could not join — try again'), 4500);
   }
 });
@@ -676,7 +739,7 @@ $('#join-btn').addEventListener('click', async () => {
 // sheet (js/share.js), which owns every route out of the browser.
 $('#share-btn').addEventListener('click', async () => {
   if (!detailId) return;
-  const ev = events.get(detailId) ?? detailCache;
+  const ev = events.get(detailId) ?? withPending(detailCache);
   if (!ev) return;
   // Embed coordinates so the recipient — usually browsing another area — pans
   // straight to it even before the event doc is fetched.
@@ -735,7 +798,7 @@ $('#remove-btn').addEventListener('click', async () => {
     console.error('[humanconnect] remove failed:', err);
     detailId = id; // put the user back where they were
     detailCache = cache;
-    fillDetail(events.get(id) ?? cache);
+    fillDetail(withPending(rawEvents.get(id) ?? cache));
     toast(writeError(err, "Couldn't remove it — try again"), 4500);
   } finally {
     rm.disabled = false;
