@@ -4,6 +4,7 @@
 //   store.mode                     'live' (Firestore) | 'demo' (this browser)
 //   store.create({a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret}>
 //   store.join(id)                 -> Promise<{already}>
+//   store.watch(id, cb)            -> unsubscribe  (cb(event | null), live)
 //   store.update({id,secret,a,b,c,durationMs,startInMs?}) -> Promise<{expiresAt,startAt}>
 //   store.remove(id, secret)       -> Promise<void>
 //
@@ -308,6 +309,26 @@ async function createFirestoreStore(onEvents, initialCells) {
         return null;
       }
     },
+    /**
+     * Live listener on ONE event, for as long as its detail sheet is open.
+     *
+     * The map's listener is scoped to the viewport and capped at MAX_EVENTS,
+     * so it is not a reliable source of truth for the event someone is
+     * actually looking at: an event opened from a shared link is usually
+     * outside those cells entirely, and a busy area can push it past the cap.
+     * Either way the joins arriving from other people's phones would never
+     * reach the open sheet, which looked like a screen that had frozen.
+     *
+     * Calls back with the event, or null once it is gone or has expired.
+     * Returns an unsubscribe function.
+     */
+    watch(id, onEvent) {
+      return onSnapshot(doc(db, 'events', id), (snap) => {
+        if (!snap.exists()) { onEvent(null); return; }
+        const [ev] = sanitize([toEvent(snap)]);
+        onEvent(ev ?? null);
+      }, (err) => console.error('[humanconnect] watch failed:', err));
+    },
     // Writes go to /api/*, never to Firestore directly — the rules deny
     // client writes outright. The snapshot listener above picks the result up
     // a moment later, so nothing here has to touch the local event list.
@@ -376,6 +397,9 @@ function createDemoStore(onEvents, seedCenter) {
   return {
     mode: 'demo',
     setArea() { /* demo data is tiny — no viewport scoping needed */ },
+    // Every demo mutation re-emits the whole list to onEvents, and the list is
+    // never viewport-scoped, so an open sheet is already live here.
+    watch() { return () => {}; },
     async get(id) { return sanitize(load()).find((e) => e.id === id) ?? null; },
     async create({ a, b, c, lat, lng, durationMs, startInMs = null }) {
       const id = 'demo-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

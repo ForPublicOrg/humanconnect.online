@@ -176,7 +176,7 @@ function toast(msg, ms = 2600) {
 // ---------------------------------------------------------------------------
 // Markers — size grows with joins
 // ---------------------------------------------------------------------------
-const markers = new Map(); // id -> { marker, joins }
+const markers = new Map(); // id -> { marker, ev } — ev is the copy last painted
 let rawEvents = new Map(); // id -> event exactly as the store sent it
 let events = new Map();    // id -> event as SHOWN (raw + this browser's pending join)
 
@@ -223,32 +223,48 @@ function pinHtml(ev) {
   return `<div class="hc-pin" style="--d:${d}px;--ring:${ring}"><span class="e">${activityEmoji(ev.b)}</span>${count}</div>`;
 }
 
+const pinIcon = (ev) => L.divIcon({ className: 'hc-marker', html: pinHtml(ev), iconSize: [0, 0] });
+
+// divIcon ignores the `alt` option, so label the element ourselves — and again
+// whenever the icon is rebuilt, since setIcon() throws the old element away.
+function labelMarker(marker, ev) {
+  const node = marker.getElement();
+  if (!node) return;
+  node.setAttribute('role', 'button');
+  node.setAttribute('aria-label', `${sentence(ev.a, ev.b, ev.c)} — view details`);
+}
+
 function makeMarker(ev) {
-  const icon = L.divIcon({ className: 'hc-marker', html: pinHtml(ev), iconSize: [0, 0] });
   const marker = L.marker([ev.lat, ev.lng], {
-    icon,
+    icon: pinIcon(ev),
     riseOnHover: true,
     zIndexOffset: ev.joins,
     keyboard: true,
   });
   marker.on('click', () => openDetail(ev.id));
-  // divIcon ignores the `alt` option, so label the element ourselves.
-  marker.on('add', () => {
-    const node = marker.getElement();
-    if (node) {
-      node.setAttribute('role', 'button');
-      node.setAttribute('aria-label', `${sentence(ev.a, ev.b, ev.c)} — view details`);
-    }
-  });
+  // Labelled from the CURRENT copy, not the one this closure captured: a
+  // clustered pin is re-added to the map every time its cluster expands,
+  // which can be long after an edit changed the words.
+  marker.on('add', () => labelMarker(marker, markers.get(ev.id)?.ev ?? ev));
   return marker;
 }
 
-// Smoothly grow an existing pin instead of recreating its icon.
+// Repaint a pin in place. A join grows it smoothly; an edit changes the words,
+// and since the emoji and ring colour are baked into the icon's HTML that case
+// rebuilds the icon instead of poking at its pieces.
 function updateMarker(entry, ev) {
+  const was = entry.ev;
   entry.marker.setZIndexOffset(ev.joins);
+  if (was.lat !== ev.lat || was.lng !== ev.lng) entry.marker.setLatLng([ev.lat, ev.lng]);
+
   const root = entry.marker.getElement();
   const pin = root?.querySelector('.hc-pin');
-  if (!pin) { entry.marker.setIcon(L.divIcon({ className: 'hc-marker', html: pinHtml(ev), iconSize: [0, 0] })); return; }
+  const reworded = was.a !== ev.a || was.b !== ev.b || was.c !== ev.c;
+  if (!pin || reworded) {
+    entry.marker.setIcon(pinIcon(ev));
+    labelMarker(entry.marker, ev);
+    return;
+  }
   pin.style.setProperty('--d', pinDiameter(ev.joins) + 'px');
   let n = pin.querySelector('.n');
   if (ev.joins > 0) {
@@ -264,6 +280,26 @@ function updateMarker(entry, ev) {
 
 function renderEvents(list) {
   rawEvents = new Map(list.map((ev) => [ev.id, ev]));
+  paintEvents();
+}
+
+// Everything a pin shows: the words pick its emoji and ring colour, the count
+// its size, the coordinates where it sits. The diff below used to compare only
+// the count, which is why an edited event kept its old face until a reload.
+const pinSig = (ev) => `${ev.a}|${ev.b}|${ev.c}|${ev.joins}|${ev.lat}|${ev.lng}`;
+
+/**
+ * Fold a write this browser just made into the local copy, so the change is on
+ * screen at once instead of after the snapshot round trip. The server has
+ * already committed it — the snapshot that follows carries the same values, so
+ * whichever lands first, the two agree.
+ */
+function patchEventLocally(id, patch) {
+  const cur = rawEvents.get(id) ?? (detailCache?.id === id ? detailCache : null);
+  if (!cur) return;
+  const next = { ...cur, ...patch };
+  if (rawEvents.has(id)) rawEvents.set(id, next);
+  if (detailCache?.id === id) detailCache = next;
   paintEvents();
 }
 
@@ -291,10 +327,10 @@ function paintEvents() {
     if (!entry) {
       const marker = makeMarker(ev);
       toAdd.push(marker);
-      markers.set(ev.id, { marker, joins: ev.joins });
-    } else if (entry.joins !== ev.joins) {
+      markers.set(ev.id, { marker, ev });
+    } else if (pinSig(entry.ev) !== pinSig(ev)) {
       updateMarker(entry, ev);
-      entry.joins = ev.joins;
+      entry.ev = ev;
     }
   }
   if (clusters) {
@@ -398,6 +434,9 @@ function hideSheet(sheet) {
   sheet.classList.remove('open');
   sheet.inert = true;
   sheet.setAttribute('aria-hidden', 'true');
+  // Every route out of the detail sheet funnels through here, so this is the
+  // one place its per-event listener has to be let go.
+  if (sheet.id === 'detail-sheet') setDetailWatch(null);
 }
 
 // User-initiated close (X button, Escape, tapping the map): drop everything.
@@ -723,7 +762,7 @@ async function saveEdit() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    await store.update({
+    const out = await store.update({
       id, secret: owned.get(id),
       a: draft.a, b: draft.b, c: draft.c,
       durationMs: draft.durationMs,
@@ -736,6 +775,14 @@ async function saveEdit() {
           : Math.min(Math.max(0, draft.startAtMs - Date.now()),
                      Math.max(0, createdAt + draft.durationMs - Date.now())),
       } : {}),
+    });
+    // Put the edit on the map now. Waiting for the snapshot made a successful
+    // save look like nothing happened — the sheet closed and the pin still
+    // wore its old name until the page was reloaded.
+    patchEventLocally(id, {
+      a: draft.a, b: draft.b, c: draft.c,
+      ...(typeof out?.expiresAt === 'number' ? { expiresAt: out.expiresAt } : {}),
+      ...(out && 'startAt' in out ? { startAt: out.startAt } : {}),
     });
     dismissSheets();
     toast('Event updated');
@@ -937,6 +984,29 @@ function fillPlace(ev) {
   });
 }
 
+// A listener on just the open event — see store.watch(). The map's own
+// listener covers a capped, viewport-scoped slice, which is not necessarily
+// the event being read; without this, someone else's join (or the creator's
+// edit, made on their phone) reached the screen only on a reload.
+let detailWatch = null;
+function setDetailWatch(id) {
+  detailWatch?.();
+  detailWatch = null;
+  if (!id) return;
+  detailWatch = store.watch?.(id, (ev) => {
+    if (detailId !== id) return;
+    if (!ev) {
+      // Removed by its creator, or its clock ran out while being read.
+      hideSheet($('#detail-sheet'));
+      detailId = null;
+      detailCache = null;
+      toast('This event is gone');
+      return;
+    }
+    patchEventLocally(id, ev);
+  }) ?? null;
+}
+
 function openDetail(id, fallback) {
   const ev = rawEvents.get(id) ?? fallback;
   if (!ev) return;
@@ -945,6 +1015,7 @@ function openDetail(id, fallback) {
   fillDetail(withPending(ev));
   fillPlace(ev);
   openSheet($('#detail-sheet'));
+  setDetailWatch(id);
   flyToEvent(ev.lat, ev.lng);
   if (!joined.has(id)) warmTurnstile('join'); // Join is one tap away — get ready
   shareModule().catch(() => {}); // so does Share — fetch it while they read
@@ -1058,6 +1129,12 @@ $('#remove-btn').addEventListener('click', async () => {
     await store.remove(id, owned.get(id));
     owned.delete(id);
     saveOwned();
+    // Take the pin off the map now, not whenever the snapshot says so — the
+    // sheet has already closed, so a pin still sitting there reads as a
+    // removal that failed.
+    rawEvents.delete(id);
+    pendingJoins.delete(id);
+    paintEvents();
     dismissSheets();
     toast('Event removed');
   } catch (err) {
@@ -1150,6 +1227,7 @@ let store = {
   mode: 'demo',
   setArea() {},
   get: async () => null,
+  watch: () => () => {},
   create: async () => { throw new Error('store not ready'); },
   join: async () => { throw new Error('store not ready'); },
   update: async () => { throw new Error('store not ready'); },
