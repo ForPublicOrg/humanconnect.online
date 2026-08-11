@@ -91,6 +91,20 @@ the wrong people; the one correct answer to "in danger right now" is the
 helplines, and both safety notes say so rather than letting the map pose as a
 panic button.
 
+The helpline numbers themselves are **localised to the visitor's country**
+([js/emergency.js](js/emergency.js)): a reader in the US sees 911, in the UK
+999, in Australia 000. The country comes from the browser's IANA timezone —
+no network request, no permission prompt, no IP lookup; one synchronous `Intl`
+call against a small static table, so it costs the page nothing. The tables
+only list countries whose number *isn't* 112, because 112 is the right default
+everywhere else (the EU's number, India's number, and the GSM standard mobile
+networks route to local emergency services); a wrong number being worse than
+none, uncertain countries are omitted and inherit that default. India is the
+origin market and stays the fallback when there is no timezone signal at all —
+the numbers baked into the static HTML — and remains the only country with a
+women's-helpline clause (1091), because that is the only one verified as a
+single nationwide number.
+
 ## Run it right now (demo mode)
 
 Open the folder with any static file server:

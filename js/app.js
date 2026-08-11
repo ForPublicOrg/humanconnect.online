@@ -15,6 +15,7 @@ import { cellsForBounds, cellsForView } from './geo.js?v=msmfhh75';
 import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js?v=msmfhh75';
 import { initSearch, reverseGeocode } from './search.js?v=msmfhh75';
 import { warmTurnstile } from './turnstile.js?v=msmfhh75';
+import { localEmergency } from './emergency.js?v=msmfhh75';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -1327,6 +1328,21 @@ if (!lsGet('hc-onboarded', false)) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') dismissSheets();
 });
+
+// ---------------------------------------------------------------------------
+// Localise the "in danger right now, call ___" numbers to the visitor's own
+// country (from the browser timezone — no network, no permission; see
+// js/emergency.js). The static HTML carries India's numbers, the origin
+// default, so a failure here leaves correct-for-India copy, never a blank.
+// ---------------------------------------------------------------------------
+try {
+  const { number, women } = localEmergency();
+  const line = number + (women ? ` — women's helpline ${women}` : '');
+  document.querySelectorAll('.sos-line').forEach((n) => { n.textContent = line; });
+  $('#sos-about').textContent = number + (women ? ` (women's helpline ${women})` : '');
+} catch (err) {
+  console.warn('[humanconnect] emergency-number localisation failed:', err);
+}
 
 // ---------------------------------------------------------------------------
 // Connectivity banner — a silent stale map is worse than an honest one.
