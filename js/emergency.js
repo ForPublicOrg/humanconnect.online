@@ -107,6 +107,7 @@ const NUMBERS = {
   KE: '999',
   KH: '117',
   KN: '911',
+  KR: '112',
   KY: '911',
   LA: '191',
   LC: '911',
@@ -177,6 +178,23 @@ const NUMBERS = {
   ZA: '10111',
   ZM: '999',
   ZW: '999',
+};
+
+// iso2 -> the FIRE AND AMBULANCE number, for countries that never unified.
+//
+// South Korea is why this exists. It has no single emergency number: 112 is the
+// police and 119 is fire/rescue/medical, and a Korean reading a bare "112"
+// sees the European number, not their own. Printing one digit-string for a
+// country with two lines is not a rounding error — it can send someone who is
+// bleeding to a police dispatcher. So where the split is real, both are shown
+// and each is labelled. NUMBERS above stays the police / personal-danger line,
+// which is what "in danger right now" most often means.
+//
+// Only genuine splits belong here. A country with a working unified line (911,
+// 999, 000, 112) must NOT be listed — a second number there is noise in a
+// sentence people read while frightened.
+const FIRE_AMBULANCE = {
+  KR: '119',   // 112 police / 119 fire, rescue, ambulance
 };
 
 // iso2 -> a single nationwide women-in-distress helpline. Only entries with a
@@ -366,6 +384,9 @@ const ZONES = {
   'Asia/Phnom_Penh': 'KH',
   // Saint Kitts and Nevis
   'America/St_Kitts': 'KN',
+  // South Korea — listed even though its police line IS 112, so the 119
+  // fire/ambulance half is shown rather than left to look like our default.
+  'Asia/Seoul': 'KR', 'ROK': 'KR',
   // Cayman Islands
   'America/Cayman': 'KY',
   // Laos
@@ -532,7 +553,10 @@ const ZONES = {
 /**
  * The emergency numbers for wherever the visitor is.
  * @param zoneOverride  test hook — pass an IANA zone instead of asking Intl.
- * @returns {{ number: string, women: string|null }}
+ * @returns {{ number: string, fire: string|null, women: string|null }}
+ *          number = police / immediate-danger line; fire = the separate
+ *          fire-and-ambulance line where the country has one; women = a
+ *          nationwide women's helpline where one is verified.
  */
 export function localEmergency(zoneOverride) {
   let zone = zoneOverride;
@@ -540,9 +564,25 @@ export function localEmergency(zoneOverride) {
     try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { zone = null; }
   }
   // No signal at all -> the origin default, exactly what the static HTML says.
-  if (!zone) return { number: '112', women: WOMEN.IN };
+  if (!zone) return { number: '112', fire: null, women: WOMEN.IN };
   const iso = ZONES[zone];
   // A country not in the tables is one where 112 is correct, by construction.
-  if (!iso) return { number: '112', women: null };
-  return { number: NUMBERS[iso] ?? '112', women: WOMEN[iso] ?? null };
+  if (!iso) return { number: '112', fire: null, women: null };
+  return {
+    number: NUMBERS[iso] ?? '112',
+    fire: FIRE_AMBULANCE[iso] ?? null,
+    women: WOMEN[iso] ?? null,
+  };
+}
+
+/**
+ * That, as the sentence the safety notes print. Kept here beside the data so
+ * the three places that show it can never word it three different ways.
+ * @param joiner  ' — ' in the notes, ' (' … in the About dialog's parenthetical
+ */
+export function emergencyLine(zoneOverride, { parenthetical = false } = {}) {
+  const { number, fire, women } = localEmergency(zoneOverride);
+  let line = fire ? `${number} for police, ${fire} for fire or ambulance` : number;
+  if (women) line += parenthetical ? ` (women's helpline ${women})` : ` — women's helpline ${women}`;
+  return line;
 }

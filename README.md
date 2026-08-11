@@ -105,6 +105,23 @@ the numbers baked into the static HTML — and remains the only country with a
 women's-helpline clause (1091), because that is the only one verified as a
 single nationwide number.
 
+**Some countries have no single number, and the note says so.** South Korea
+splits police (112) from fire/rescue/ambulance (119); printing one digit-string
+there could send someone who is bleeding to a police dispatcher, so both are
+shown and labelled: *"call 112 for police, 119 for fire or ambulance."* Only
+genuine splits get this — a country with a working unified line stays a bare
+number, because a frightened reader should not have to parse a menu.
+
+Korea is also why the coverage check is now **mechanical rather than
+remembered**. It was missing from the table entirely and inherited the 112
+default, which happens to be its police number — a wrong answer that looked
+right. The gap is found by subtracting the zones the module maps from
+`Intl.supportedValuesOf('timeZone')`: whatever remains is exactly the set of
+visitors being served the default, and every one of those countries has been
+checked and either confirmed as genuinely-112 or given an override. Do that
+subtraction again after any edit; a country nobody thought to check is the one
+failure mode this design has.
+
 ## Run it right now (demo mode)
 
 Open the folder with any static file server:

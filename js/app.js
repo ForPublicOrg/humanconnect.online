@@ -15,7 +15,7 @@ import { cellsForBounds, cellsForView, geohash4 } from './geo.js?v=msmfhh75';
 import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js?v=msmfhh75';
 import { initSearch, reverseGeocode } from './search.js?v=msmfhh75';
 import { warmTurnstile } from './turnstile.js?v=msmfhh75';
-import { localEmergency } from './emergency.js?v=msmfhh75';
+import { emergencyLine } from './emergency.js?v=msmfhh75';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -1367,10 +1367,9 @@ document.addEventListener('keydown', (e) => {
 // default, so a failure here leaves correct-for-India copy, never a blank.
 // ---------------------------------------------------------------------------
 try {
-  const { number, women } = localEmergency();
-  const line = number + (women ? ` — women's helpline ${women}` : '');
+  const line = emergencyLine();
   document.querySelectorAll('.sos-line').forEach((n) => { n.textContent = line; });
-  $('#sos-about').textContent = number + (women ? ` (women's helpline ${women})` : '');
+  $('#sos-about').textContent = emergencyLine(undefined, { parenthetical: true });
 } catch (err) {
   console.warn('[humanconnect] emergency-number localisation failed:', err);
 }
