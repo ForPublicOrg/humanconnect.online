@@ -11,7 +11,7 @@ import {
 } from './config.js?v=msmfhh75';
 import { createStore } from './store.js?v=msmfhh75';
 import { buildMap, pinDiameter } from './map-engine.js?v=msmfhh75';
-import { cellsForBounds, cellsForView } from './geo.js?v=msmfhh75';
+import { cellsForBounds, cellsForView, geohash4 } from './geo.js?v=msmfhh75';
 import { toggleTheme, onThemeChange, effectiveTheme } from './theme.js?v=msmfhh75';
 import { initSearch, reverseGeocode } from './search.js?v=msmfhh75';
 import { warmTurnstile } from './turnstile.js?v=msmfhh75';
@@ -314,6 +314,18 @@ function patchEventLocally(id, patch) {
   const next = { ...cur, ...patch };
   if (rawEvents.has(id)) rawEvents.set(id, next);
   if (detailCache?.id === id) detailCache = next;
+  paintEvents();
+}
+
+/**
+ * Same idea for a brand-new event. /api/create returns only after the commit,
+ * so the pin can go up the moment the sheet closes; the snapshot that follows
+ * carries the identical document. Without this, a create waited on the
+ * snapshot round trip — edits and removals were already compensated, creates
+ * were the one write that still looked like nothing happened until a reload.
+ */
+function addEventLocally(ev) {
+  rawEvents.set(ev.id, ev);
   paintEvents();
 }
 
@@ -902,23 +914,42 @@ $('#create-btn').addEventListener('click', async () => {
   const btn = $('#create-btn');
   btn.disabled = true;
   btn.textContent = copy.ctaBusy;
+  // Frozen before the request: a tap while it is in flight moves the draft,
+  // and the pin painted below must match what the server actually saved.
+  const sent = {
+    k: draft.kind,
+    a: draft.a, b: draft.b, c: draft.c,
+    lat: draft.latlng.lat, lng: draft.latlng.lng,
+    durationMs: draft.durationMs,
+    // Sent as an offset from now, not a timestamp: the server owns the clock,
+    // so a device running minutes fast still gets the time its owner picked.
+    // Clamped because the sheet may have sat open long enough to drift past
+    // the chosen moment, or past the window itself.
+    startInMs: draft.startAtMs == null
+      ? null
+      : Math.min(Math.max(0, draft.startAtMs - Date.now()), draft.durationMs),
+  };
   try {
-    const { id, secret } = await store.create({
-      k: draft.kind,
-      a: draft.a, b: draft.b, c: draft.c,
-      lat: draft.latlng.lat, lng: draft.latlng.lng,
-      durationMs: draft.durationMs,
-      // Sent as an offset from now, not a timestamp: the server owns the clock,
-      // so a device running minutes fast still gets the time its owner picked.
-      // Clamped because the sheet may have sat open long enough to drift past
-      // the chosen moment, or past the window itself.
-      startInMs: draft.startAtMs == null
-        ? null
-        : Math.min(Math.max(0, draft.startAtMs - Date.now()), draft.durationMs),
-    });
+    const { id, secret, expiresAt, startAt } = await store.create(sent);
     owned.set(id, secret ?? null);
     saveOwned();
     lsSet('hc-last-create', Date.now());
+    // Put the new pin on the map NOW, like edits and removals — waiting for
+    // the snapshot echo makes a successful create look like nothing happened
+    // until the page is refreshed.
+    addEventLocally({
+      id,
+      k: sent.k, a: sent.a, b: sent.b, c: sent.c,
+      lat: sent.lat, lng: sent.lng,
+      g4: geohash4(sent.lat, sent.lng),
+      joins: 0,
+      // The server anchors the expiry at creation, so its 'created' stamp is
+      // exactly the expiry minus the stay we asked for. The snapshot echo
+      // replaces this with the authoritative document either way.
+      createdAt: expiresAt - sent.durationMs,
+      startAt,
+      expiresAt,
+    });
     dismissSheets();
     toast(copy.created);
   } catch (err) {

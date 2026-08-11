@@ -2,7 +2,7 @@
 // Storage adapter. Two implementations behind one tiny API:
 //
 //   store.mode                     'live' (Firestore) | 'demo' (this browser)
-//   store.create({k,a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret}>
+//   store.create({k,a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret, expiresAt, startAt}>
 //   store.join(id)                 -> Promise<{already}>
 //   store.watch(id, cb)            -> unsubscribe  (cb(event | null), live)
 //   store.update({id,secret,k,a,b,c,durationMs,startInMs?}) -> Promise<{expiresAt,startAt}>
@@ -350,14 +350,21 @@ async function createFirestoreStore(onEvents, initialCells) {
       }, (err) => console.error('[humanconnect] watch failed:', err));
     },
     // Writes go to /api/*, never to Firestore directly — the rules deny
-    // client writes outright. The snapshot listener above picks the result up
-    // a moment later, so nothing here has to touch the local event list.
+    // client writes outright. The snapshot listener above will echo the new
+    // event eventually, but the caller must not have to WAIT for that round
+    // trip to see its own pin — so the server's time stamps ride back with
+    // the id, and the UI paints from them at once.
     async create({ k = KIND_EVENT, a, b, c, lat, lng, durationMs, startInMs = null }) {
       const out = await withToken('create', (token) =>
         apiPost('/api/create', { k, a, b, c, lat, lng, durationMs, startInMs, token }));
       // The secret is the ONLY proof of ownership; it exists in this browser
       // and nowhere else. Losing it just means the event runs its full course.
-      return { id: out.id, secret: out.secret };
+      return {
+        id: out.id,
+        secret: out.secret,
+        expiresAt: out.expiresAt,
+        startAt: out.startAt ?? null,
+      };
     },
     async join(id) {
       return withToken('join', (token) =>
@@ -426,17 +433,20 @@ function createDemoStore(onEvents, seedCenter) {
     async create({ k = KIND_EVENT, a, b, c, lat, lng, durationMs, startInMs = null }) {
       const id = 'demo-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       const now = Date.now();
+      const startAt = startInMs == null ? null : now + startInMs;
+      const expiresAt = now + durationMs;
       mutate((list) => list.push({
         id, k, a, b, c, lat, lng,
         g4: geohash4(lat, lng),
         joins: 0,
         createdAt: now,
-        startAt: startInMs == null ? null : now + startInMs,
-        expiresAt: now + durationMs,
+        startAt,
+        expiresAt,
       }));
       // No server, so no real ownership token — a placeholder keeps the UI's
-      // "do I own this?" check uniform across both stores.
-      return { id, secret: 'demo' };
+      // "do I own this?" check uniform across both stores. Times come back
+      // for the same reason: same return shape as the live store.
+      return { id, secret: 'demo', expiresAt, startAt };
     },
     async join(id) {
       let found = false;
