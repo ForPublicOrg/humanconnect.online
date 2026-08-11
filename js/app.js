@@ -3,11 +3,11 @@
 // ============================================================================
 
 import {
-  VIBES, ACTIVITIES, FORMATS,
-  sentence, activityEmoji, activityColor, isValidCombo,
+  KIND_EVENT, KIND_HELP, taxonomy,
+  sentence, itemEmoji, itemColor, isValidCombo,
 } from './words.js?v=msmfhh75';
 import {
-  DURATIONS, START_PRESETS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL,
+  DURATIONS, START_PRESETS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL, kindCopy,
 } from './config.js?v=msmfhh75';
 import { createStore } from './store.js?v=msmfhh75';
 import { buildMap, pinDiameter } from './map-engine.js?v=msmfhh75';
@@ -127,7 +127,9 @@ function fmtWait(ms) {
   return m <= 90 ? `${m} min` : `${Math.ceil(m / 60)}h`;
 }
 
-function writeError(err, fallback) {
+// `copy` is the kind's language (js/config.js) — a couple of these sentences
+// name the thing that failed, and a help request is not an event.
+function writeError(err, fallback, copy = kindCopy(KIND_EVENT)) {
   switch (err?.code) {
     case 'offline':
       return "You're offline — try again when you're back.";
@@ -143,15 +145,19 @@ function writeError(err, fallback) {
         ? `${err.message} Try again in ${fmtWait(err.retryAfterMs)}.`
         : err.message;
     case 'network_cap':
-      return 'This connection has already joined this event.';
+      return copy.networkCap;
+    case 'kind_mismatch':
+      // Only reachable if a stale tab holds an id that has since become
+      // something else — nothing the user can fix by trying again.
+      return 'That pin is not what this sheet thinks it is — reload and try again.';
     case 'bad_start':
       // The sheet clamps to the same rule, so this only surfaces when a draft
       // sat open long enough to drift — say what to do about it.
-      return 'That start time is after the event leaves the map — pick a sooner time, or a longer stay.';
+      return `That time is after the ${copy.noun} leaves the map — pick a sooner time, or a longer stay.`;
     case 'bad_duration':
       // Only reachable from an edit: the stay is measured from placement, and
       // the sheet sat open long enough for the picked one to fully elapse.
-      return 'The event has already been up longer than that — pick a longer stay.';
+      return `The ${copy.noun} has already been up longer than that — pick a longer stay.`;
     case 'verification_unconfigured':
     case 'server_unconfigured':
       return 'Not switched on yet — check back soon.';
@@ -216,11 +222,16 @@ function confirmPendingJoin(id, joins) {
   if (p && typeof joins === 'number') p.floor = joins;
 }
 
+// A help request wears the same pin with a different silhouette: a rounded
+// callout instead of a circle, in the one shared help colour. Shape carries it
+// rather than colour, because nine activity categories already own the palette
+// — see the note above NEEDS in js/words.js.
 function pinHtml(ev) {
   const d = pinDiameter(ev.joins);
-  const ring = activityColor(ev.b);
+  const ring = itemColor(ev.k, ev.b);
   const count = ev.joins > 0 ? `<b class="n">${ev.joins}</b>` : '';
-  return `<div class="hc-pin" style="--d:${d}px;--ring:${ring}"><span class="e">${activityEmoji(ev.b)}</span>${count}</div>`;
+  const help = ev.k === KIND_HELP ? ' help' : '';
+  return `<div class="hc-pin${help}" style="--d:${d}px;--ring:${ring}"><span class="e">${itemEmoji(ev.k, ev.b)}</span>${count}</div>`;
 }
 
 const pinIcon = (ev) => L.divIcon({ className: 'hc-marker', html: pinHtml(ev), iconSize: [0, 0] });
@@ -231,7 +242,8 @@ function labelMarker(marker, ev) {
   const node = marker.getElement();
   if (!node) return;
   node.setAttribute('role', 'button');
-  node.setAttribute('aria-label', `${sentence(ev.a, ev.b, ev.c)} — view details`);
+  const what = ev.k === KIND_HELP ? 'help request' : 'event';
+  node.setAttribute('aria-label', `${sentence(ev.k, ev.a, ev.b, ev.c)} — ${what}, view details`);
 }
 
 function makeMarker(ev) {
@@ -259,7 +271,7 @@ function updateMarker(entry, ev) {
 
   const root = entry.marker.getElement();
   const pin = root?.querySelector('.hc-pin');
-  const reworded = was.a !== ev.a || was.b !== ev.b || was.c !== ev.c;
+  const reworded = was.a !== ev.a || was.b !== ev.b || was.c !== ev.c || was.k !== ev.k;
   if (!pin || reworded) {
     entry.marker.setIcon(pinIcon(ev));
     labelMarker(entry.marker, ev);
@@ -283,10 +295,11 @@ function renderEvents(list) {
   paintEvents();
 }
 
-// Everything a pin shows: the words pick its emoji and ring colour, the count
-// its size, the coordinates where it sits. The diff below used to compare only
-// the count, which is why an edited event kept its old face until a reload.
-const pinSig = (ev) => `${ev.a}|${ev.b}|${ev.c}|${ev.joins}|${ev.lat}|${ev.lng}`;
+// Everything a pin shows: the kind picks its shape, the words its emoji and
+// ring colour, the count its size, the coordinates where it sits. The diff
+// below used to compare only the count, which is why an edited event kept its
+// old face until a reload.
+const pinSig = (ev) => `${ev.k}|${ev.a}|${ev.b}|${ev.c}|${ev.joins}|${ev.lat}|${ev.lng}`;
 
 /**
  * Fold a write this browser just made into the local copy, so the change is on
@@ -301,6 +314,19 @@ function patchEventLocally(id, patch) {
   if (rawEvents.has(id)) rawEvents.set(id, next);
   if (detailCache?.id === id) detailCache = next;
   paintEvents();
+}
+
+// What's in view, counted honestly. Help requests are not events, so they get
+// their own half of the sentence rather than being folded into a total that
+// would quietly misdescribe them.
+function liveCountText(list) {
+  const help = list.reduce((n, ev) => n + (ev.k === KIND_HELP ? 1 : 0), 0);
+  const plans = list.length - help;
+  const asking = help === 1 ? '1 asking for help' : `${help} asking for help`;
+  if (!list.length) return 'Nothing here yet';
+  if (!help) return plans === 1 ? '1 live event' : `${plans} live events`;
+  if (!plans) return asking;
+  return `${plans} ${plans === 1 ? 'event' : 'events'} · ${asking}`;
 }
 
 function paintEvents() {
@@ -342,9 +368,7 @@ function paintEvents() {
   }
 
   $('#empty-note').hidden = list.length > 0;
-  $('#live-count').textContent =
-    list.length === 0 ? 'No events here yet' :
-    list.length === 1 ? '1 live event' : `${list.length} live events`;
+  $('#live-count').textContent = liveCountText(list);
 
   // detailCache holds the RAW event; the overlay is applied at fill time so a
   // cached copy can't drift into showing the same pending join twice.
@@ -359,7 +383,7 @@ function paintEvents() {
     // viewport-scoped area and we keep showing the cached details.
     if (store.mode === 'demo' || !detailCache || detailCache.expiresAt <= Date.now()) {
       hideSheet($('#detail-sheet'));
-      toast('This event is gone');
+      toast(kindCopy(detailCache?.k).gone);
       detailId = null;
       detailCache = null;
     } else {
@@ -413,7 +437,9 @@ async function resolveDeepLink(id, coords) {
     map.setView([ev.lat, ev.lng], Math.max(map.getZoom(), 15));
     openDetail(id, ev);
   } else {
-    toast('That event has ended');
+    // Nothing was fetched, so there is no kind to name it by — and it may have
+    // been removed rather than expired. One sentence that is true either way.
+    toast("That's no longer on the map");
     history.replaceState(null, '', location.pathname + location.search);
   }
 }
@@ -471,6 +497,7 @@ document.querySelectorAll('[data-close]').forEach((btn) => {
 // default). startPreset remembers WHICH chip produced it, so the right one
 // stays lit while the clock moves underneath.
 const draft = {
+  kind: KIND_EVENT,
   a: -1, b: -1, c: -1,
   durationMs: DURATIONS[1].ms,
   startAtMs: null, startPreset: null,
@@ -493,6 +520,7 @@ function removeDraftPin() {
 function startCreate(latlng) {
   editing = null;
   startTouched = false;
+  draft.kind = KIND_EVENT;
   draft.a = -1; draft.b = -1; draft.c = -1;
   draft.durationMs = DURATIONS[1].ms;
   draft.startAtMs = null; draft.startPreset = null;
@@ -512,7 +540,6 @@ function startCreate(latlng) {
   draftPin.on('dragend', () => { draft.latlng = draftPin.getLatLng().wrap(); });
 
   buildCreateSheet();
-  $('#create-btn').textContent = 'Put it on the map';
   openSheet($('#create-sheet'));
   panDraftAboveSheet(latlng);
   dismissOnboarding();
@@ -529,6 +556,10 @@ function startEdit(ev) {
   editing = { id: ev.id, createdAt: ev.createdAt };
   startTouched = false;
   startNotice = '';
+  // Not editable, and the switch is hidden while editing: the indices below
+  // only mean anything against this kind's word lists, and /api/update refuses
+  // a mismatch anyway.
+  draft.kind = ev.k;
   draft.a = ev.a; draft.b = ev.b; draft.c = ev.c;
   draft.latlng = null;
   // The stored stay is created→expiry; snap it to the chip that produced it
@@ -543,7 +574,6 @@ function startEdit(ev) {
   draft.startPreset = null;
   removeDraftPin();
   buildCreateSheet();
-  $('#create-btn').textContent = 'Save changes';
   openSheet($('#create-sheet'));
 }
 
@@ -557,15 +587,57 @@ function panDraftAboveSheet(latlng) {
   if (Math.abs(dy) > 10) map.panBy([0, dy], { animate: true, duration: 0.3 });
 }
 
+// Everything in the sheet that the kind decides: which word lists the three
+// chip rows draw from, what the labels call them, and what the button says.
+// Re-run whenever the kind changes, which is why nothing here is wired once.
 function buildCreateSheet() {
-  renderChipRow($('#vibe-chips'), VIBES, () => draft.a, (i) => { draft.a = draft.a === i ? -1 : i; refreshCreate(); });
+  const copy = kindCopy(draft.kind);
+
+  // The switch itself. Hidden while editing — a plan cannot become a request
+  // (api/update.js refuses it), so offering the choice would be a lie.
+  $('#kind-switch').hidden = !!editing;
+  $('#kind-event').setAttribute('aria-pressed', String(draft.kind === KIND_EVENT));
+  $('#kind-help').setAttribute('aria-pressed', String(draft.kind === KIND_HELP));
+  $('#create-help-note').hidden = draft.kind !== KIND_HELP;
+  $('#create-sheet').setAttribute('aria-label', editing ? `Edit this ${copy.noun}` : copy.sheetLabel);
+
+  $('#label-main').textContent = copy.labelMain;
+  $('#opt-main').textContent = copy.optMain;
+  $('#label-first').textContent = copy.labelFirst;
+  $('#opt-first').textContent = copy.optFirst;
+  $('#label-last').textContent = copy.labelLast;
+  $('#opt-last').textContent = copy.optLast;
+  $('#label-start').textContent = copy.labelStart;
+  $('#opt-start').textContent = copy.optStart;
+  $('#activity-search').placeholder = copy.searchPlaceholder;
+  $('#create-btn').textContent = editing ? 'Save changes' : copy.cta;
+
+  const t = taxonomy(draft.kind);
+  renderChipRow($('#vibe-chips'), t.first, () => draft.a, (i) => { draft.a = draft.a === i ? -1 : i; refreshCreate(); });
   renderActivityGrid('');
-  renderChipRow($('#format-chips'), FORMATS, () => draft.c, (i) => { draft.c = draft.c === i ? -1 : i; refreshCreate(); });
+  renderChipRow($('#format-chips'), t.last, () => draft.c, (i) => { draft.c = draft.c === i ? -1 : i; refreshCreate(); });
   renderDurations();
   renderStarts();
   $('#activity-search').value = '';
   refreshCreate();
 }
+
+// Switching kind throws the word choices away rather than carrying the
+// indices across: index 5 is 'Weekend' in one list and 'Tomorrow' in the
+// other, so keeping them would silently rename what the user had composed.
+function setKind(kind) {
+  if (editing || draft.kind === kind) return;
+  draft.kind = kind;
+  draft.a = -1; draft.b = -1; draft.c = -1;
+  // The time itself carries over — when you need help is still when you need
+  // it — but a notice explaining a tap in the other mode does not.
+  startNotice = '';
+  buildCreateSheet();
+  if (kind === KIND_HELP) $('#create-help-note').scrollIntoView({ block: 'nearest' });
+}
+
+$('#kind-event').addEventListener('click', () => setKind(KIND_EVENT));
+$('#kind-help').addEventListener('click', () => setKind(KIND_HELP));
 
 function renderChipRow(container, words, getSel, onTap) {
   container.replaceChildren();
@@ -582,17 +654,17 @@ function renderActivityGrid(filter) {
   const box = $('#activity-chips');
   box.replaceChildren();
   const f = filter.trim().toLowerCase();
-  ACTIVITIES.forEach((act, i) => {
+  taxonomy(draft.kind).main.forEach((act, i) => {
     if (f && !act.w.toLowerCase().includes(f)) return;
     const chip = el('button', 'chip act');
     chip.type = 'button';
     chip.append(el('span', 'em', act.e), document.createTextNode(' ' + act.w.replace(/-/g, ' ')));
     if (draft.b === i) chip.classList.add('sel');
-    chip.style.setProperty('--ring', activityColor(i));
+    chip.style.setProperty('--ring', itemColor(draft.kind, i));
     chip.addEventListener('click', () => { draft.b = draft.b === i ? -1 : i; refreshCreate(); });
     box.appendChild(chip);
   });
-  if (!box.children.length) box.appendChild(el('p', 'no-match', 'No matching activity'));
+  if (!box.children.length) box.appendChild(el('p', 'no-match', kindCopy(draft.kind).noMatch));
 }
 
 $('#activity-search').addEventListener('input', (e) => renderActivityGrid(e.target.value));
@@ -615,7 +687,7 @@ function renderDurations() {
       // The notice explains *this* tap, so it never outlives it.
       startNotice = '';
       if (draft.startAtMs != null && draft.startAtMs > startLimit()) {
-        startNotice = `Start time cleared — ${d.label} on the map doesn't reach it.`;
+        startNotice = kindCopy(draft.kind).startCleared(d.label);
         draft.startAtMs = null;
         draft.startPreset = null;
       }
@@ -685,9 +757,10 @@ function renderStarts() {
   if (custom) input.value = toLocalInput(draft.startAtMs);
 
   // The same sentence the detail sheet will show, so what you set is what you
-  // (and everyone else) will read back.
+  // (and everyone else) will read back — "Starts 6:30 pm" for a plan, "Needed
+  // 6:30 pm" for a request.
   const said = [];
-  if (draft.startAtMs != null) said.push(`Starts ${fmtClock(draft.startAtMs)}.`);
+  if (draft.startAtMs != null) said.push(`${kindCopy(draft.kind).starts(fmtClock(draft.startAtMs))}.`);
   if (startNotice) said.push(startNotice);
   note.textContent = said.join(' ');
   note.hidden = !said.length;
@@ -714,14 +787,15 @@ $('#start-at').addEventListener('change', (e) => {
   const picked = new Date(raw).getTime(); // no zone in the string ⇒ local time
   if (!Number.isFinite(picked)) { startNotice = ''; setStart(null); return; }
 
+  const copy = kindCopy(draft.kind);
   const limit = startLimit();
   if (picked > limit) {
-    startNotice = "An event can't start after it leaves the map — moved to its last moment.";
+    startNotice = copy.startClamped;
     setStart(limit, null);
   } else if (picked <= Date.now()) {
     // The field only has minute resolution, so picking the current minute is a
     // request to start now, not a mistake worth explaining.
-    startNotice = Date.now() - picked >= 60e3 ? 'That time has passed — starting right now.' : '';
+    startNotice = Date.now() - picked >= 60e3 ? copy.startPassed : '';
     setStart(null);
   } else {
     startNotice = '';
@@ -730,26 +804,29 @@ $('#start-at').addEventListener('change', (e) => {
 });
 
 function refreshCreate() {
+  const t = taxonomy(draft.kind);
+  const copy = kindCopy(draft.kind);
+
   // Re-render selections
-  renderChipRow($('#vibe-chips'), VIBES, () => draft.a, (i) => { draft.a = draft.a === i ? -1 : i; refreshCreate(); });
+  renderChipRow($('#vibe-chips'), t.first, () => draft.a, (i) => { draft.a = draft.a === i ? -1 : i; refreshCreate(); });
   renderActivityGrid($('#activity-search').value);
-  renderChipRow($('#format-chips'), FORMATS, () => draft.c, (i) => { draft.c = draft.c === i ? -1 : i; refreshCreate(); });
+  renderChipRow($('#format-chips'), t.last, () => draft.c, (i) => { draft.c = draft.c === i ? -1 : i; refreshCreate(); });
 
   const preview = $('#create-preview');
   const hint = $('#create-hint');
   const btn = $('#create-btn');
 
   if (draft.b === -1) {
-    preview.textContent = 'Pick an activity…';
+    preview.textContent = copy.previewEmpty;
     preview.classList.add('empty');
-    hint.textContent = 'Choose one activity, then add a vibe or a format.';
+    hint.textContent = copy.hintPick;
     btn.disabled = true;
     return;
   }
-  const valid = isValidCombo(draft.a, draft.b, draft.c);
-  preview.textContent = sentence(draft.a, draft.b, draft.c);
+  const valid = isValidCombo(draft.kind, draft.a, draft.b, draft.c);
+  preview.textContent = sentence(draft.kind, draft.a, draft.b, draft.c);
   preview.classList.remove('empty');
-  hint.textContent = valid ? 'Looks good — set how long it stays on the map.' : 'Add a vibe or a format to complete the name (2–3 words).';
+  hint.textContent = valid ? copy.hintOk : copy.hintMore;
   btn.disabled = !valid;
 }
 
@@ -757,13 +834,17 @@ function refreshCreate() {
 // own event, and /api/update has its own limiter.
 async function saveEdit() {
   const { id, createdAt } = editing;
-  if (!isValidCombo(draft.a, draft.b, draft.c)) return;
+  const copy = kindCopy(draft.kind);
+  if (!isValidCombo(draft.kind, draft.a, draft.b, draft.c)) return;
   const btn = $('#create-btn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
     const out = await store.update({
       id, secret: owned.get(id),
+      // Not a change — the server validates the words against it and refuses
+      // anything but the kind already stored.
+      k: draft.kind,
       a: draft.a, b: draft.b, c: draft.c,
       durationMs: draft.durationMs,
       // Only when the user touched the start row — omitted, the server keeps
@@ -785,14 +866,14 @@ async function saveEdit() {
       ...(out && 'startAt' in out ? { startAt: out.startAt } : {}),
     });
     dismissSheets();
-    toast('Event updated');
+    toast(copy.updated);
   } catch (err) {
     console.error('[humanconnect] update failed:', err);
-    if (err?.code === 'not-found') { dismissSheets(); toast('This event is gone'); return; }
-    toast(writeError(err, "Couldn't save the changes — try again"), 4500);
+    if (err?.code === 'not-found') { dismissSheets(); toast(copy.gone); return; }
+    toast(writeError(err, copy.saveFailed, copy), 4500);
   } finally {
     btn.disabled = false;
-    btn.textContent = editing ? 'Save changes' : 'Put it on the map';
+    btn.textContent = editing ? 'Save changes' : copy.cta;
   }
 }
 
@@ -801,16 +882,20 @@ $('#create-btn').addEventListener('click', async () => {
   const last = lsGet('hc-last-create', 0);
   if (Date.now() - last < CREATE_COOLDOWN_MS) {
     const wait = Math.ceil((CREATE_COOLDOWN_MS - (Date.now() - last)) / 1000);
-    toast(`Take a breath — you can create another event in ${wait}s`);
+    // One bucket for both kinds, server-side and here — so say it without
+    // naming either.
+    toast(`Take a breath — you can post again in ${wait}s`);
     return;
   }
-  if (!draft.latlng || !isValidCombo(draft.a, draft.b, draft.c)) return;
+  if (!draft.latlng || !isValidCombo(draft.kind, draft.a, draft.b, draft.c)) return;
 
+  const copy = kindCopy(draft.kind);
   const btn = $('#create-btn');
   btn.disabled = true;
-  btn.textContent = 'Putting it on the map…';
+  btn.textContent = copy.ctaBusy;
   try {
     const { id, secret } = await store.create({
+      k: draft.kind,
       a: draft.a, b: draft.b, c: draft.c,
       lat: draft.latlng.lat, lng: draft.latlng.lng,
       durationMs: draft.durationMs,
@@ -826,13 +911,13 @@ $('#create-btn').addEventListener('click', async () => {
     saveOwned();
     lsSet('hc-last-create', Date.now());
     dismissSheets();
-    toast('Your event is live 💚');
+    toast(copy.created);
   } catch (err) {
     console.error(err);
-    toast(writeError(err, 'Could not create the event — check your connection'), 4500);
+    toast(writeError(err, copy.createFailed, copy), 4500);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Put it on the map';
+    btn.textContent = copy.cta;
   }
 });
 
@@ -907,17 +992,18 @@ function fmtClock(ms) {
   return `${DAY_FMT.format(d)} ${time}`;
 }
 
-const fmtJoins = (joins) =>
-  joins === 0 ? 'Be the first to join' :
-  joins === 1 ? '1 person joining' : `${joins} people joining`;
+const fmtJoins = (ev) => kindCopy(ev.k).joins(ev.joins);
 
-const fmtEnds = (ev) => `Ends in ${fmtRemaining(ev.expiresAt - Date.now())}`;
+const fmtEnds = (ev) => kindCopy(ev.k).ends(fmtRemaining(ev.expiresAt - Date.now()));
 
-// Empty for events with no time set — most of them, and every event created
+// Empty for pins with no time set — most of them, and every event created
 // before start times existed.
-const fmtStarts = (ev) =>
-  ev.startAt == null ? '' :
-  ev.startAt <= Date.now() ? `Started ${fmtClock(ev.startAt)}` : `Starts ${fmtClock(ev.startAt)}`;
+const fmtStarts = (ev) => {
+  if (ev.startAt == null) return '';
+  const copy = kindCopy(ev.k);
+  const when = fmtClock(ev.startAt);
+  return ev.startAt <= Date.now() ? copy.started(when) : copy.starts(when);
+};
 
 function paintStarts(ev) {
   const node = $('#detail-starts');
@@ -927,21 +1013,35 @@ function paintStarts(ev) {
 
 function fillDetail(ev) {
   if (!ev) return;
-  $('#detail-emoji').textContent = activityEmoji(ev.b);
-  $('#detail-emoji').style.setProperty('--ring', activityColor(ev.b));
-  $('#detail-title').textContent = sentence(ev.a, ev.b, ev.c);
-  $('#detail-joins').textContent = fmtJoins(ev.joins);
+  const copy = kindCopy(ev.k);
+  const help = ev.k === KIND_HELP;
+
+  const medallion = $('#detail-emoji');
+  medallion.textContent = itemEmoji(ev.k, ev.b);
+  medallion.style.setProperty('--ring', itemColor(ev.k, ev.b));
+  medallion.classList.toggle('help', help);
+  $('#detail-kind').hidden = !help;
+  $('#detail-help-note').hidden = !help;
+  $('#detail-sheet').setAttribute('aria-label', help ? 'Help request details' : 'Event details');
+  $('#share-btn').setAttribute('aria-label', `Share this ${copy.noun}`);
+
+  $('#detail-title').textContent = sentence(ev.k, ev.a, ev.b, ev.c);
+  $('#detail-joins').textContent = fmtJoins(ev);
   paintStarts(ev);
   $('#detail-ends').textContent = fmtEnds(ev);
   $('#detail-mine').hidden = !owned.has(ev.id);
+  $('#detail-mine').textContent = copy.mineTag;
+  $('#report-btn').textContent = copy.report;
+  $('#edit-btn').textContent = copy.edit;
 
-  // Remove is offered only where it can actually work: events this browser
+  // Remove is offered only where it can actually work: pins this browser
   // created AND for which we still hold the owner secret. (Events from before
   // the API existed are labelled "yours" but have no secret — nothing can take
   // those down early.)
   const rm = $('#remove-btn');
   rm.hidden = !owned.get(ev.id);
-  if (rm.dataset.arm) { delete rm.dataset.arm; rm.textContent = 'Remove this event'; }
+  delete rm.dataset.arm; // any re-render disarms the confirm
+  rm.textContent = copy.remove;
   // Edit additionally needs the placement time — the anchor of the 7-day
   // ceiling — which the snapshot echoes back as createdAt a moment after
   // creating.
@@ -950,10 +1050,10 @@ function fillDetail(ev) {
   const btn = $('#join-btn');
   if (joined.has(ev.id)) {
     btn.disabled = true;
-    btn.textContent = "You're in ✓";
+    btn.textContent = copy.joined;
   } else {
     btn.disabled = false;
-    btn.textContent = 'Join';
+    btn.textContent = copy.join;
   }
 }
 
@@ -997,10 +1097,11 @@ function setDetailWatch(id) {
     if (detailId !== id) return;
     if (!ev) {
       // Removed by its creator, or its clock ran out while being read.
+      const gone = kindCopy(detailCache?.k).gone;
       hideSheet($('#detail-sheet'));
       detailId = null;
       detailCache = null;
-      toast('This event is gone');
+      toast(gone);
       return;
     }
     patchEventLocally(id, ev);
@@ -1032,6 +1133,7 @@ function openDetail(id, fallback) {
 $('#join-btn').addEventListener('click', async () => {
   if (!detailId || joined.has(detailId)) return;
   const id = detailId;
+  const copy = kindCopy((rawEvents.get(id) ?? detailCache)?.k);
   const btn = $('#join-btn');
   // Optimistic, on both counts: the button flips so live snapshot re-renders
   // can't push it back mid-write, and the number moves now rather than a round
@@ -1039,7 +1141,7 @@ $('#join-btn').addEventListener('click', async () => {
   joined.add(id);
   lsSet('hc-joined', [...joined]);
   btn.disabled = true;
-  btn.textContent = "You're in ✓";
+  btn.textContent = copy.joined;
   addPendingJoin(id);
   try {
     const out = await store.join(id);
@@ -1056,12 +1158,12 @@ $('#join-btn').addEventListener('click', async () => {
     // showing it rather than inviting a retry that can never succeed.
     if (err?.code === 'not-found') {
       if (detailId === id) { dismissSheets(); detailId = null; detailCache = null; }
-      toast('This event is gone');
+      toast(copy.gone);
       return;
     }
     // Re-enable from the cached copy — the event may have left the viewport.
     if (detailId === id) fillDetail(withPending(rawEvents.get(id) ?? detailCache));
-    toast(writeError(err, 'Could not join — try again'), 4500);
+    toast(writeError(err, copy.joinFailed, copy), 4500);
   }
 });
 
@@ -1075,16 +1177,20 @@ $('#share-btn').addEventListener('click', async () => {
   // straight to it even before the event doc is fetched.
   const url = `${location.origin}${location.pathname}#e=${detailId}` +
     `@${ev.lat.toFixed(5)},${ev.lng.toFixed(5)}`;
-  const title = sentence(ev.a, ev.b, ev.c);
+  const copy = kindCopy(ev.k);
+  const title = sentence(ev.k, ev.a, ev.b, ev.c);
   try {
     const { openShare } = await shareModule();
     await openShare(ev, {
       url,
       title,
-      text: `${title} — join me on humanconnect`,
+      // What the share sheet and its image call this thing — a request is not
+      // an event, and a shared picture is the copy strangers see first.
+      noun: copy.noun,
+      text: copy.shareText(title),
       // Read off the screen, not re-derived: the card is a picture of what
       // the user is looking at, down to the button labels.
-      joinsText: fmtJoins(ev.joins),
+      joinsText: fmtJoins(ev),
       startsText: $('#detail-starts').textContent,
       endsText: fmtEnds(ev),
       place: $('#detail-place').textContent,
@@ -1108,14 +1214,15 @@ $('#edit-btn').addEventListener('click', () => {
 // second tap within the same view actually removes. Any re-render disarms.
 $('#remove-btn').addEventListener('click', async () => {
   if (!detailId) return;
+  const copy = kindCopy((rawEvents.get(detailId) ?? detailCache)?.k);
   const rm = $('#remove-btn');
   if (!rm.dataset.arm) {
     rm.dataset.arm = '1';
-    rm.textContent = 'Tap again to remove';
+    rm.textContent = copy.removeArmed;
     return;
   }
   delete rm.dataset.arm;
-  rm.textContent = 'Remove this event';
+  rm.textContent = copy.remove;
   const id = detailId;
   const cache = detailCache;
   // Detach from the event BEFORE the write. Removing it re-renders the map
@@ -1136,13 +1243,13 @@ $('#remove-btn').addEventListener('click', async () => {
     pendingJoins.delete(id);
     paintEvents();
     dismissSheets();
-    toast('Event removed');
+    toast(copy.removed);
   } catch (err) {
     console.error('[humanconnect] remove failed:', err);
     detailId = id; // put the user back where they were
     detailCache = cache;
     fillDetail(withPending(rawEvents.get(id) ?? cache));
-    toast(writeError(err, "Couldn't remove it — try again"), 4500);
+    toast(writeError(err, copy.removeFailed, copy), 4500);
   } finally {
     rm.disabled = false;
   }
@@ -1151,9 +1258,11 @@ $('#remove-btn').addEventListener('click', async () => {
 $('#report-btn').addEventListener('click', () => {
   if (!detailId) return;
   const ev = events.get(detailId) ?? detailCache;
-  const subject = encodeURIComponent(`[HumanConnect] Report event ${detailId}`);
+  const noun = kindCopy(ev?.k).noun;
+  const subject = encodeURIComponent(`[HumanConnect] Report ${noun} ${detailId}`);
   const body = encodeURIComponent(
-    `Event: ${ev ? sentence(ev.a, ev.b, ev.c) : detailId}\nLocation: ${ev?.lat}, ${ev?.lng}\nReason: `,
+    `${noun === 'request' ? 'Request' : 'Event'}: ${ev ? sentence(ev.k, ev.a, ev.b, ev.c) : detailId}\n` +
+    `Location: ${ev?.lat}, ${ev?.lng}\nReason: `,
   );
   location.href = `mailto:${REPORT_EMAIL}?subject=${subject}&body=${body}`;
 });

@@ -79,7 +79,9 @@ function wire() {
 /**
  * Build the card, then open the share sheet.
  * @param ev        the event
- * @param meta      { url, title, text, joinsText, startsText, endsText, place }
+ * @param meta      { url, title, text, noun, joinsText, startsText, endsText, place }
+ *                  — `noun` is what this pin is called ('event' | 'request'),
+ *                  which is the only word in this sheet that varies by kind.
  * @param handlers  { openSheet, toast } from app.js
  */
 export async function openShare(ev, meta, handlers) {
@@ -92,12 +94,13 @@ export async function openShare(ev, meta, handlers) {
   btn.disabled = true;
   btn.textContent = 'Making image…';
 
+  const noun = meta.noun || 'event';
   try {
     const canvas = await renderShareCard(ev, meta);
     // JPEG: universally accepted as an upload, and a tenth the size of PNG for
     // a card that is mostly map imagery.
     const blob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
-    const name = `humanconnect-${slug(meta.title)}.jpg`;
+    const name = `humanconnect-${slug(meta.title, noun)}.jpg`;
 
     if (card) URL.revokeObjectURL(card.previewUrl);
     card = {
@@ -108,16 +111,19 @@ export async function openShare(ev, meta, handlers) {
     };
     share = { url: meta.url, title: meta.title, text: meta.text };
 
+    $('#share-sheet-title').textContent = `Share this ${noun}`;
+    $('#share-sheet-sub').textContent = `A picture of this ${noun} on the map.`;
+    $('#share-sheet').setAttribute('aria-label', `Share this ${noun}`);
     $('#share-img').src = card.previewUrl;
-    $('#share-img').alt = `${meta.title} — the event and the map around it`;
+    $('#share-img').alt = `${meta.title} — the ${noun} and the map around it`;
 
     // A link intent can never carry a file. Say so, and name the route that
     // actually exists on THIS device rather than a button that may be hidden.
     const native = !!navigator.canShare?.({ files: [card.file] });
     $('#share-native').hidden = !native;
     $('#share-fine').textContent = native
-      ? 'Link posts show a preview of humanconnect, not the event. For Instagram, Snapchat, or any post that should carry the picture, use Share image….'
-      : 'Link posts show a preview of humanconnect, not the event. To post the picture itself, save or copy it and attach it in the composer.';
+      ? `Link posts show a preview of humanconnect, not the ${noun}. For Instagram, Snapchat, or any post that should carry the picture, use Share image….`
+      : `Link posts show a preview of humanconnect, not the ${noun}. To post the picture itself, save or copy it and attach it in the composer.`;
     for (const a of document.querySelectorAll('#share-targets .share-target')) {
       a.href = TARGETS.find((t) => t.label === a.dataset.label).href(share);
     }
@@ -178,5 +184,5 @@ function copyText(text) {
   return true;
 }
 
-const slug = (s) =>
-  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'event';
+const slug = (s, fallback = 'event') =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || fallback;

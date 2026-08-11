@@ -6,18 +6,27 @@
 // the thing standing between the database and arbitrary content. Nothing that
 // isn't a pair of integers from the fixed word lists can become an event name.
 //
-// It imports the very same js/words.js the UI uses, so the list lengths can
-// never drift apart the way the hard-coded VIBES=30 / ACTIVITIES=86 /
-// FORMATS=26 constants in the rules could.
+// It imports the very same js/words.js the UI uses, so the two can never drift
+// apart the way the hard-coded VIBES / ACTIVITIES / FORMATS list lengths in the
+// rules could — and that now covers the help-request lists too.
 // ============================================================================
 
-import { isValidCombo } from '../../js/words.js';
+import { isValidCombo, isKind, KIND_EVENT } from '../../js/words.js';
 import { geohash4 } from '../../js/geo.js';
 import { fail } from './http.js';
 import { MAX_EVENT_MS, MIN_EVENT_MS } from './config.js';
 
 const int = (v) => (typeof v === 'number' && Number.isInteger(v) ? v : NaN);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+
+/**
+ * `k` as it arrives from a client or comes back off a stored document.
+ *
+ * Absent means a plan, and has to keep meaning that forever: every event
+ * written before help requests existed has no `k` at all, and /api/create
+ * still omits the field for plans so those documents stay byte-identical.
+ */
+export const kindOf = (v) => (v == null ? KIND_EVENT : v);
 
 /** Firestore auto-ids, and the demo/seed ids the client may still hold. */
 export function assertEventId(id) {
@@ -27,21 +36,28 @@ export function assertEventId(id) {
   return id;
 }
 
-/** Words + stay: the part of an event's shape shared by create and update. */
+/** Words + stay: the part of a pin's shape shared by create and update. */
 function cleanWordsAndStay(body) {
+  // Which word lists {a,b,c} index into. Validated before the indices, because
+  // "is 42 a real activity?" has no answer until we know it isn't a need.
+  const kind = kindOf(body.k);
+  if (!isKind(kind)) {
+    throw fail(400, 'bad_kind', 'That is not something this map can hold.');
+  }
+
   const a = int(body.a);
   const b = int(body.b);
   const c = int(body.c);
-  if (!isValidCombo(a, b, c)) {
-    throw fail(400, 'bad_words', 'Event names must be 2–3 words from the built-in lists.');
+  if (!isValidCombo(kind, a, b, c)) {
+    throw fail(400, 'bad_words', 'Names must be 2–3 words from the built-in lists.');
   }
 
   const duration = num(body.durationMs);
   if (!(duration >= MIN_EVENT_MS && duration <= MAX_EVENT_MS)) {
-    throw fail(400, 'bad_duration', 'Events last between 5 minutes and 7 days.');
+    throw fail(400, 'bad_duration', 'Pins last between 5 minutes and 7 days.');
   }
 
-  return { a, b, c, durationMs: Math.round(duration) };
+  return { kind, a, b, c, durationMs: Math.round(duration) };
 }
 
 /**
@@ -89,6 +105,11 @@ export function cleanEvent(body) {
  * current start time, null = clear it, a number = new offset from now.
  * Whether the result still fits inside the event's ORIGINAL window is checked
  * in api/update.js, where the creation time is known.
+ *
+ * `kind` comes back out for the same reason the location doesn't go in: it is
+ * not editable. api/update.js compares it to the stored one and refuses a
+ * mismatch, so a plan can never turn into a help request under the people who
+ * already said they were coming.
  */
 export function cleanEventPatch(body) {
   const fields = cleanWordsAndStay(body);

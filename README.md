@@ -5,6 +5,11 @@ yoga session, an evening cricket match, a community cleanup — and watch people
 join. The pin grows as more people join. When the event's time runs out (max
 1 week), it disappears forever.
 
+- **Two kinds of pin.** A *plan* invites people to something and they tap
+  **Join**. A *help request* asks people for something — a lift, blood, a
+  ladder, an hour of tutoring — and they tap **I'm coming**. Everything else is
+  identical, which is the point: same word lists, same timer, same counter,
+  same ownership. See [Help requests](#help-requests) below.
 - **Static site, three tiny endpoints.** The map is plain files reading
   Firestore directly. Only the three *writes* (create, join, remove) go through
   serverless functions in [api/](api), because "one join per person" is not
@@ -13,7 +18,7 @@ join. The pin grows as more people join. When the event's time runs out (max
   Cloudflare Turnstile plus limits keyed on server-derived identity, so a fresh
   incognito window buys nothing. Creators can remove their own events early
   using a secret issued once at creation.
-- **Abuse-proof names.** Event names are composed from a fixed word list
+- **Abuse-proof names.** Names are composed from fixed word lists
   ([js/words.js](js/words.js)) and stored as integer indices — free text can
   never enter the database. The API validates against that same file.
 - **Optional start time.** A plan can say when it actually begins, picked from
@@ -22,6 +27,58 @@ join. The pin grows as more people join. When the event's time runs out (max
   the API enforces that, not just the sheet.
 - **Place search.** Jump anywhere with the header search (geocoding by
   [Photon](https://photon.komoot.io), keyless, OpenStreetMap data, worldwide).
+
+## Help requests
+
+The create sheet opens on **Plan something**; the switch at the top of it flips
+to **Need help**, and the whole sheet re-reads itself — different word lists,
+different labels, a different button. Nothing else about the pin changes.
+
+|  | Plan | Help request |
+| --- | --- | --- |
+| Stored as | no `k` field | `k: 1` |
+| Name is | `[vibe?] [activity] [format?]` | `[urgency?] [need] [wording?]` |
+| Word lists | `VIBES` / `ACTIVITIES` / `FORMATS` | `URGENCY` / `NEEDS` / `HELP_FORMATS` |
+| Reads as | "Evening Cricket Match" | "Urgent Blood Needed" |
+| Pin | circle, category colour | rounded callout, one shared `--sos` colour, slow halo |
+| Button | Join → "You're in ✓" | I'm coming → "You're coming ✓" |
+
+Three decisions worth knowing about:
+
+- **Shape carries it, not colour.** Nine activity categories already own the
+  palette, so a tenth set of meanings for the same hues would make the map
+  unreadable. Every help pin is the *same* colour and a different *silhouette*
+  — legible at any zoom, in greyscale, and next to a food-orange event pin.
+  That colour is defined twice on purpose: `HELP_COLOR` in
+  [js/words.js](js/words.js) and `--sos` in [css/style.css](css/style.css),
+  because [js/share-card.js](js/share-card.js) paints it onto a canvas where no
+  CSS variable reaches. A test asserts they match.
+- **The kind is immutable.** `/api/update` compares the kind the client sent
+  against the stored one and refuses a mismatch (`409 kind_mismatch`). A plan
+  turning into a plea under the people who already joined it would be the same
+  kind of lie as moving the pin, which is also forbidden.
+- **An unknown kind is dropped on read, not guessed.** `sanitize()` in
+  [js/store.js](js/store.js) discards any document whose `k` this build does
+  not recognise, because its `{a,b,c}` would index into the wrong word lists —
+  which is exactly the failure the fixed vocabulary exists to prevent. A future
+  kind is therefore invisible to old clients rather than mislabelled by them.
+
+Every safety layer applies unchanged: fixed vocabulary, Turnstile, the same
+create/join limits, the Report button. On top of that, the create sheet and the
+detail sheet both carry a safety note for requests — meet in public, never hand
+over money, documents or OTPs, and call **112** (women's helpline **1091**) in
+a real emergency. The map is neighbours helping neighbours, not a dispatch
+service, and it says so where somebody is about to rely on it.
+
+Personal safety follows the same line. The vocabulary covers the *before* and
+*after* of danger — `Walk-Home`, `Safe-Place`, `Phone-Call`, `Safe-Walk`, and a
+`Women-Only` first word so a woman can ask specifically for a woman — but
+deliberately has no words for danger in progress (`Attack`, `Followed`,
+`Harassment` are absent). A pin waits for whoever happens to pass and
+broadcasts a frightened person's exact location to everyone, including exactly
+the wrong people; the one correct answer to "in danger right now" is the
+helplines, and both safety notes say so rather than letting the map pose as a
+panic button.
 
 ## Run it right now (demo mode)
 
@@ -221,7 +278,10 @@ denies every client write. Creating, joining, editing and removing go through
 
 | Threat | Defense |
 | --- | --- |
-| Offensive / illegal event names | Names are indices into a fixed word list. [api/_lib/validate.js](api/_lib/validate.js) rejects anything else, importing the *same* [js/words.js](js/words.js) the UI uses so the two can't drift. No free text exists anywhere in the system. |
+| Offensive / illegal names | Names are indices into fixed word lists — for help requests too. [api/_lib/validate.js](api/_lib/validate.js) rejects anything else, importing the *same* [js/words.js](js/words.js) the UI uses so the two can't drift. No free text exists anywhere in the system. |
+| Indices that mean something else | `{a,b,c}` are meaningless without the kind, so the kind is validated *first* and the indices against that kind's lists. An unknown kind is refused on write and dropped on read, never rendered as a plan. |
+| A plan quietly becoming a plea | The kind is not editable. `/api/update` compares it to the stored one inside the transaction and returns `409 kind_mismatch`, the same way the location is simply not accepted. |
+| Help requests used as bait | The vocabulary is fixed, so no phone number, link or address can be posted; the pin is a place and a need. Both sheets warn to meet in public and never hand over money, documents or OTPs, and point to 112 for real emergencies. Requests carry the same Report button, and the same 7-day ceiling, as everything else. |
 | Scripted floods | Every create and join needs a fresh, single-use Cloudflare Turnstile token, verified server-side before Firestore is touched at all. Automation pays a solved challenge per write. |
 | Unlimited event creation | 6 events per day per network, behind a 2-minute cooldown — counted in Firestore against a hash of the caller's address, not in localStorage. |
 | Join-count inflation | A join is recorded against `events/{id}/joiners/{networkHash}` before the counter moves. A repeat from the same device is idempotent; a *new* device on the same connection is allowed up to 8 per event, then refused. Opening incognito changes the device, never the network. |
@@ -308,8 +368,11 @@ code in a visitor's browser, or cost you money on the Spark plan.
 
 ## If you edit the word lists
 
-Only **append** words — never reorder or remove, since existing events store
-indices into these lists and would silently change meaning.
+Only **append** words — never reorder or remove, since existing pins store
+indices into these lists and would silently change meaning. This applies to all
+six lists (`VIBES`, `ACTIVITIES`, `FORMATS`, `URGENCY`, `NEEDS`,
+`HELP_FORMATS`) and to the kind numbers themselves: `0` must keep meaning "a
+plan", because that is what a document with no `k` field is.
 
 That's the whole procedure now. The list lengths used to be duplicated as
 constants in `firestore.rules` and had to be kept in sync by hand; validation

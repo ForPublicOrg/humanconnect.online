@@ -2,16 +2,18 @@
 // Storage adapter. Two implementations behind one tiny API:
 //
 //   store.mode                     'live' (Firestore) | 'demo' (this browser)
-//   store.create({a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret}>
+//   store.create({k,a,b,c,lat,lng,durationMs,startInMs}) -> Promise<{id, secret}>
 //   store.join(id)                 -> Promise<{already}>
 //   store.watch(id, cb)            -> unsubscribe  (cb(event | null), live)
-//   store.update({id,secret,a,b,c,durationMs,startInMs?}) -> Promise<{expiresAt,startAt}>
+//   store.update({id,secret,k,a,b,c,durationMs,startInMs?}) -> Promise<{expiresAt,startAt}>
 //   store.remove(id, secret)       -> Promise<void>
 //
 // Both push the full list of live events to onEvents(list) whenever anything
-// changes. Event shape: { id, a, b, c, lat, lng, joins, createdAt, startAt,
+// changes. Event shape: { id, k, a, b, c, lat, lng, joins, createdAt, startAt,
 // expiresAt } with times in epoch milliseconds. startAt is null when the
-// creator didn't pick a time; when set it is never after expiresAt.
+// creator didn't pick a time; when set it is never after expiresAt. `k` is the
+// kind — 0 for a plan, 1 for a help request — and is always a number here even
+// though plans carry no such field in Firestore (see sanitize).
 //
 // READS come straight from Firestore, live, exactly as before. WRITES go
 // through /api/* instead: they need a Cloudflare Turnstile token and limits
@@ -20,7 +22,7 @@
 // ============================================================================
 
 import { firebaseConfig, appCheckSiteKey, MAX_EVENTS } from './config.js?v=msmfhh75';
-import { isValidCombo } from './words.js?v=msmfhh75';
+import { isValidCombo, isKind, KIND_EVENT, KIND_HELP } from './words.js?v=msmfhh75';
 import { geohash4 } from './geo.js?v=msmfhh75';
 import { getTurnstileToken } from './turnstile.js?v=msmfhh75';
 
@@ -105,20 +107,35 @@ export async function createStore({ onEvents, seedCenter, initialCells }) {
 // Drop anything malformed or expired — defense in depth on top of the rules.
 // The g4 check stops cell-spoofing: an event claiming a geohash cell that
 // doesn't match its coordinates is discarded on read.
+//
+// Also the one place `k` is settled. A missing `k` is a plan (that is what
+// every event written before help requests existed is), but an UNRECOGNISED
+// one is dropped rather than shown as a plan: its {a,b,c} would index into the
+// wrong word lists, which is exactly the kind of wrong name this whole system
+// exists to prevent. So a build that predates a future kind simply doesn't
+// draw it. Everything downstream can then rely on ev.k being a real kind.
 function sanitize(list) {
   const now = Date.now();
-  return list.filter((ev) =>
-    ev &&
-    isValidCombo(ev.a, ev.b, ev.c) &&
-    typeof ev.lat === 'number' && ev.lat >= -90 && ev.lat <= 90 &&
-    typeof ev.lng === 'number' && ev.lng >= -180 && ev.lng <= 180 &&
-    typeof ev.expiresAt === 'number' && ev.expiresAt > now &&
-    // Optional, but if present it has to obey the rule the API enforces:
-    // nothing may be scheduled for after it has left the map.
-    (ev.startAt == null || (typeof ev.startAt === 'number' && ev.startAt <= ev.expiresAt)) &&
-    Number.isInteger(ev.joins) && ev.joins >= 0 &&
-    ev.g4 === geohash4(ev.lat, ev.lng)
-  );
+  const out = [];
+  for (const ev of list) {
+    if (!ev) continue;
+    const k = ev.k == null ? KIND_EVENT : ev.k;
+    if (
+      isKind(k) &&
+      isValidCombo(k, ev.a, ev.b, ev.c) &&
+      typeof ev.lat === 'number' && ev.lat >= -90 && ev.lat <= 90 &&
+      typeof ev.lng === 'number' && ev.lng >= -180 && ev.lng <= 180 &&
+      typeof ev.expiresAt === 'number' && ev.expiresAt > now &&
+      // Optional, but if present it has to obey the rule the API enforces:
+      // nothing may be scheduled for after it has left the map.
+      (ev.startAt == null || (typeof ev.startAt === 'number' && ev.startAt <= ev.expiresAt)) &&
+      Number.isInteger(ev.joins) && ev.joins >= 0 &&
+      ev.g4 === geohash4(ev.lat, ev.lng)
+    ) {
+      out.push(ev.k === k ? ev : { ...ev, k });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +228,9 @@ async function createFirestoreStore(onEvents, initialCells) {
     return {
       id: d.id,
       a: v.a, b: v.b, c: v.c,
+      // Absent on plans — including every event written before help requests
+      // existed. sanitize() turns that into KIND_EVENT.
+      k: v.k,
       lat: v.lat, lng: v.lng,
       g4: v.g4,
       joins: v.joins,
@@ -332,9 +352,9 @@ async function createFirestoreStore(onEvents, initialCells) {
     // Writes go to /api/*, never to Firestore directly — the rules deny
     // client writes outright. The snapshot listener above picks the result up
     // a moment later, so nothing here has to touch the local event list.
-    async create({ a, b, c, lat, lng, durationMs, startInMs = null }) {
+    async create({ k = KIND_EVENT, a, b, c, lat, lng, durationMs, startInMs = null }) {
       const out = await withToken('create', (token) =>
-        apiPost('/api/create', { a, b, c, lat, lng, durationMs, startInMs, token }));
+        apiPost('/api/create', { k, a, b, c, lat, lng, durationMs, startInMs, token }));
       // The secret is the ONLY proof of ownership; it exists in this browser
       // and nowhere else. Losing it just means the event runs its full course.
       return { id: out.id, secret: out.secret };
@@ -347,6 +367,8 @@ async function createFirestoreStore(onEvents, initialCells) {
     // startInMs is tri-state — omit the key to keep the current start time,
     // null to clear it, a number (offset from now) to set a new one.
     // durationMs is the TOTAL stay; the server anchors it at creation time.
+    // `k` is sent so the server can validate the words against the right lists,
+    // and is refused if it disagrees with the stored kind — never applied.
     async update(payload) {
       return apiPost('/api/update', payload);
     },
@@ -401,11 +423,11 @@ function createDemoStore(onEvents, seedCenter) {
     // never viewport-scoped, so an open sheet is already live here.
     watch() { return () => {}; },
     async get(id) { return sanitize(load()).find((e) => e.id === id) ?? null; },
-    async create({ a, b, c, lat, lng, durationMs, startInMs = null }) {
+    async create({ k = KIND_EVENT, a, b, c, lat, lng, durationMs, startInMs = null }) {
       const id = 'demo-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       const now = Date.now();
       mutate((list) => list.push({
-        id, a, b, c, lat, lng,
+        id, k, a, b, c, lat, lng,
         g4: geohash4(lat, lng),
         joins: 0,
         createdAt: now,
@@ -427,14 +449,16 @@ function createDemoStore(onEvents, seedCenter) {
       if (!found) { const err = new Error('event gone'); err.code = 'not-found'; throw err; }
       return { already: false };
     },
-    // Same rules as the API: the stay is anchored at creation, and a start
-    // time stranded past the new expiry is cleared, not kept.
-    async update({ id, a, b, c, durationMs, startInMs }) {
+    // Same rules as the API: the stay is anchored at creation, a start time
+    // stranded past the new expiry is cleared rather than kept, and the kind
+    // is not editable.
+    async update({ id, k = KIND_EVENT, a, b, c, durationMs, startInMs }) {
       const now = Date.now();
       let out = null;
       mutate((list) => {
         const ev = list.find((e) => e.id === id);
         if (!ev || ev.createdAt == null) return;
+        if ((ev.k ?? KIND_EVENT) !== k) return;
         const expiresAt = ev.createdAt + durationMs;
         if (expiresAt <= now) return;
         ev.a = a; ev.b = b; ev.c = c;
@@ -456,7 +480,8 @@ function createDemoStore(onEvents, seedCenter) {
   };
 }
 
-// A few nearby sample events so the very first visit shows the product.
+// A few nearby sample pins so the very first visit shows the product — plans
+// and help requests both, since the map holds the two side by side.
 function seedEvents(center) {
   const { lat, lng } = center || { lat: 22.5, lng: 78.9 };
   const h = 3600e3;
@@ -464,22 +489,26 @@ function seedEvents(center) {
   // visitor's persisted hc-joined set (which would mark them already joined).
   const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   // startInMs is optional and always <= ttlMs, mirroring the rule the API
-  // enforces: an event may not begin after it has left the map.
-  const mk = (dLat, dLng, a, b, c, joins, ttlMs, startInMs = null) => ({
-    id: `seed-${nonce}-${b}`,
-    a, b, c,
+  // enforces: nothing may begin after it has left the map.
+  const mk = (k, dLat, dLng, a, b, c, joins, ttlMs, startInMs = null) => ({
+    id: `seed-${nonce}-${k}-${b}`,
+    k, a, b, c,
     lat: lat + dLat, lng: lng + dLng,
     g4: geohash4(lat + dLat, lng + dLng),
     joins,
     startAt: startInMs == null ? null : Date.now() + startInMs,
     expiresAt: Date.now() + ttlMs,
   });
+  const E = KIND_EVENT;
+  const S = KIND_HELP;
   return [
-    mk( 0.010,  0.012, 0,  3, -1, 12, 14 * h, 12 * h),   // Morning Yoga
-    mk(-0.008,  0.006, 1,  9,  2, 47, 6 * h, 2 * h),     // Evening Cricket Match
-    mk( 0.004, -0.011, 6, 73,  8,  8, 2 * 24 * h, 22 * h), // Community Cleanup Drive
-    mk(-0.013, -0.007, -1, 30, 0,  3, 20 * h),           // Coffee Meetup — starts now
-    mk( 0.016, -0.003, 5, 55, 18, 0, 4 * 24 * h, 2 * 24 * h), // Weekend Photography Walkathon
-    mk(-0.002,  0.017, 4, 82, -1, 21, 30 * h, 6 * h),    // Night Gaming
+    mk(E,  0.010,  0.012, 0,  3, -1, 12, 14 * h, 12 * h),      // Morning Yoga
+    mk(E, -0.008,  0.006, 1,  9,  2, 47, 6 * h, 2 * h),        // Evening Cricket Match
+    mk(E,  0.004, -0.011, 6, 73,  8,  8, 2 * 24 * h, 22 * h),  // Community Cleanup Drive
+    mk(E, -0.013, -0.007, -1, 30, 0,  3, 20 * h),              // Coffee Meetup — starts now
+    mk(E,  0.016, -0.003, 5, 55, 18, 0, 4 * 24 * h, 2 * 24 * h), // Weekend Photography Walkathon
+    mk(E, -0.002,  0.017, 4, 82, -1, 21, 30 * h, 6 * h),       // Night Gaming
+    mk(S,  0.006, -0.004, 0,  0,  0,  4, 12 * h),              // Urgent Blood Needed
+    mk(S, -0.011,  0.013, 10, 19, 4,  0, 3 * h),               // Roadside Flat Tyre Help
   ];
 }

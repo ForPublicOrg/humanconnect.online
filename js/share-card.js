@@ -20,7 +20,7 @@
 // ============================================================================
 
 import { effectiveTheme } from './theme.js';
-import { activityEmoji, activityColor, sentence } from './words.js';
+import { itemEmoji, itemColor, sentence, KIND_HELP } from './words.js';
 import { TILE_STYLES, BORDER_COLOR, BORDER_GEOJSON, pinDiameter } from './map-engine.js';
 
 // 4:5 — a phone's proportions, and the tallest shape no platform crops badly.
@@ -152,20 +152,36 @@ function drawBorder(ctx, geo, x0, y0, theme) {
   ctx.restore();
 }
 
-// The pin — same geometry as .hc-pin in css/style.css, doubled.
+// The pin — same geometry as .hc-pin in css/style.css, doubled. A help request
+// is the rounded callout .hc-pin.help draws instead of a circle; the picture
+// has to carry the same at-a-glance difference the map does.
 function drawPin(ctx, ev, pinY, pal) {
   const d = pinDiameter(ev.joins) * SCALE;
-  const ring = activityColor(ev.b);
+  const ring = itemColor(ev.k, ev.b);
+  const help = ev.k === KIND_HELP;
   const cx = W / 2;
   const cy = pinY - 14 - d / 2; // 14 = the 7px gap above the stem, doubled
   const r = d / 2;
+  const CORNER = 0.3;           // .hc-pin.help border-radius, as a fraction
+
+  // Path the pin's outline, inset by `inset` px on every side (negative for
+  // the halo outside it). Half the ring width is where a CSS `border` sits.
+  function face(inset) {
+    if (!help) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - inset, 0, Math.PI * 2);
+      return;
+    }
+    const side = d - inset * 2;
+    roundRect(ctx, cx - r + inset, cy - r + inset, side, side, side * CORNER);
+  }
 
   ctx.save();
   ctx.shadowColor = 'rgba(20, 22, 26, 0.35)';
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 4;
 
-  // Stem first, so the circle's shadow lands on top of it rather than beside.
+  // Stem first, so the face's shadow lands on top of it rather than beside.
   ctx.beginPath();
   ctx.moveTo(cx - 12, cy + r - 2);
   ctx.lineTo(cx + 12, cy + r - 2);
@@ -174,19 +190,39 @@ function drawPin(ctx, ev, pinY, pal) {
   ctx.fillStyle = ring;
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  face(0);
   ctx.fillStyle = pal.paper;
   ctx.fill();
   ctx.restore();
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, r - 3, 0, Math.PI * 2);
+  // Help pins carry a tinted face on the map (a 10% wash of the ring colour).
+  if (help) {
+    ctx.save();
+    ctx.globalAlpha = 0.1;
+    face(0);
+    ctx.fillStyle = ring;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  face(3);
   ctx.lineWidth = 6;
   ctx.strokeStyle = ring;
   ctx.stroke();
 
-  emoji(ctx, activityEmoji(ev.b), cx, cy + 2, Math.round(d * 0.5), pal);
+  // ...and the halo the live pin pulses. Still images don't pulse, so it is
+  // drawn once, at the animation's most legible frame.
+  if (help) {
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    face(-14);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = ring;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  emoji(ctx, itemEmoji(ev.k, ev.b), cx, cy + 2, Math.round(d * 0.5), pal);
 
   if (ev.joins > 0) {
     const label = String(ev.joins);
@@ -360,7 +396,7 @@ function layoutMeta(ctx, segs, maxW) {
 function measureSheet(ctx, ev, meta, pal) {
   const textX = PAD + MEDALLION + GUTTER;
   const maxW = W - textX - PAD;
-  const title = fitTitle(ctx, sentence(ev.a, ev.b, ev.c), maxW);
+  const title = fitTitle(ctx, sentence(ev.k, ev.a, ev.b, ev.c), maxW);
   const titleLh = Math.round(title.size * 1.18);
 
   const metaLines = layoutMeta(ctx, metaSegments(meta, pal), maxW);
@@ -399,16 +435,19 @@ function drawSheet(ctx, ev, meta, m, top, pal) {
 
   const headTop = top + PAD;
 
-  // #detail-emoji — paper disc, category ring
+  // #detail-emoji — paper disc, category ring; the rounded callout of
+  // #detail-emoji.help when this is a request
   const cy = headTop + m.headH / 2;
-  ctx.beginPath();
-  ctx.arc(PAD + MEDALLION / 2, cy, MEDALLION / 2 - 3, 0, Math.PI * 2);
+  const mx = PAD + MEDALLION / 2;
+  const mr = MEDALLION / 2 - 3;
+  if (ev.k === KIND_HELP) roundRect(ctx, mx - mr, cy - mr, mr * 2, mr * 2, mr * 2 * 0.3);
+  else { ctx.beginPath(); ctx.arc(mx, cy, mr, 0, Math.PI * 2); }
   ctx.fillStyle = pal.paper;
   ctx.fill();
   ctx.lineWidth = 6;
-  ctx.strokeStyle = activityColor(ev.b);
+  ctx.strokeStyle = itemColor(ev.k, ev.b);
   ctx.stroke();
-  emoji(ctx, activityEmoji(ev.b), PAD + MEDALLION / 2, cy + 2, 52, pal);
+  emoji(ctx, itemEmoji(ev.k, ev.b), mx, cy + 2, 52, pal);
 
   // #detail-title, vertically centred against the medallion like the flex row
   let y = headTop + Math.max(0, (m.headH - m.textH) / 2) + m.title.size * 0.82;

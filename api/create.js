@@ -1,5 +1,5 @@
 // ============================================================================
-// POST /api/create — put an event on the map.
+// POST /api/create — put a plan, or a request for help, on the map.
 //
 // Order matters:
 //   1. shape check   (free — never spend anything on a malformed body)
@@ -48,6 +48,10 @@ export default handler(async (req, body) => {
   const batch = store.batch();
   batch.set(evRef, {
     a: ev.a, b: ev.b, c: ev.c,
+    // Which word lists {a,b,c} point into. Omitted for plans on purpose, so a
+    // plan document stays exactly what it has always been and "no k" keeps its
+    // one meaning — see kindOf() in api/_lib/validate.js.
+    ...(ev.kind ? { k: ev.kind } : {}),
     lat: ev.lat, lng: ev.lng,
     g4: ev.g4,
     joins: 0,

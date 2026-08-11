@@ -1,17 +1,27 @@
 // ============================================================================
 // The word system — the heart of HumanConnect's safety model.
 //
-// Event names are NEVER free text. An event is a combination of:
-//   [vibe?] + [activity] + [format?]   →  "Evening Cricket Match"
-// stored in Firestore as integer indices {a, b, c} (-1 = not used).
-// Security rules validate the indices, so arbitrary text can never
-// enter the database.
+// Names are NEVER free text. A pin's name is a combination of three slots:
+//   [first?] + [main] + [last?]
+// stored in Firestore as integer indices {a, b, c} (-1 = not used), plus the
+// KIND of pin (`k`) that says which word lists those indices point into:
 //
-// IMPORTANT: if you add/remove words, update the list lengths in
-// firestore.rules (VIBES=30, ACTIVITIES=86, FORMATS=26) and redeploy rules.
-// Only APPEND new words — never reorder or delete, or existing events
-// would change meaning.
+//   kind 0 — a plan:  [vibe?]    + [activity] + [format?]  →  "Evening Cricket Match"
+//   kind 1 — a help request: [urgency?] + [need] + [wording?] → "Urgent Blood Needed"
+//
+// api/_lib/validate.js imports this file, so the API and the UI can never
+// disagree about which indices exist. Arbitrary text cannot enter the database
+// through either one.
+//
+// Only APPEND new words to any list — never reorder or delete, or existing
+// pins would silently change meaning. The same goes for the kind numbers.
 // ============================================================================
+
+// The kinds. `k` is absent on every event written before help requests
+// existed, so 0 must stay the meaning of "not set" (see kindOf() in
+// api/_lib/validate.js and sanitize() in js/store.js).
+export const KIND_EVENT = 0;
+export const KIND_HELP = 1;
 
 export const VIBES = [
   'Morning', 'Evening', 'Sunrise', 'Sunset', 'Night', 'Weekend',
@@ -131,27 +141,199 @@ export const CAT_COLORS = {
   social:  '#06b6d4',
 };
 
-/** True when {a,b,c} indices form a valid 2–3 word event name. */
-export function isValidCombo(a, b, c) {
-  const aOk = Number.isInteger(a) && a >= -1 && a < VIBES.length;
-  const bOk = Number.isInteger(b) && b >= 0 && b < ACTIVITIES.length;
-  const cOk = Number.isInteger(c) && c >= -1 && c < FORMATS.length;
+// ============================================================================
+// Help requests (kind 1)
+//
+// Same three slots, different words: a request asks people FOR something
+// instead of inviting them TO something. "Urgent Blood Needed", "Roadside
+// Flat-Tyre Help", "Elderly Groceries Delivery".
+//
+// The lists stay deliberately practical and bounded. A fixed vocabulary is the
+// whole legal-safety model — someone in genuine trouble can say what they need
+// and where, and nobody can turn the map into a message board.
+// ============================================================================
+
+/** First word: who is asking, or how soon. 'Women-Only' lets a woman ask for
+ *  a woman — "Women-Only Walk-Home Needed", "Women-Only Ride Wanted". */
+export const URGENCY = [
+  'Urgent', 'Emergency', 'Immediate', 'Today', 'Tonight', 'Tomorrow',
+  'Weekend', 'Ongoing', 'Quick', 'Small', 'Roadside', 'Stranded',
+  'Injured', 'Elderly', 'Family', 'Student', 'Neighborhood', 'Community',
+  'Monsoon', 'Flood', 'Heatwave', 'Night', 'Morning', 'Evening',
+  'Hospital', 'Temporary', 'Long-Term', 'Nearby', 'Women-Only',
+];
+
+// w: word, e: emoji (shown on the map pin). No category here on purpose —
+// every help pin shares ONE ring colour (HELP_COLOR). Nine activity categories
+// already colour the plan pins; a second, different meaning for the same hues
+// would turn the map into soup. The SHAPE says "someone needs help" (a rounded
+// callout instead of a circle — see .hc-pin.help), the emoji says what for.
+export const NEEDS = [
+  // Medical
+  { w: 'Blood', e: '🩸' },
+  { w: 'Medicine', e: '💊' },
+  { w: 'First-Aid', e: '🩹' },
+  { w: 'Medical-Help', e: '🚑' },
+  { w: 'Hospital-Visit', e: '🏥' },
+  { w: 'Wheelchair', e: '♿' },
+  { w: 'Patient-Care', e: '🛏️' },
+  // Essentials
+  { w: 'Food', e: '🍲' },
+  { w: 'Water', e: '💧' },
+  { w: 'Groceries', e: '🛒' },
+  { w: 'Cooked-Meal', e: '🍱' },
+  { w: 'Clothes', e: '👕' },
+  { w: 'Blankets', e: '🧣' },
+  { w: 'Shelter', e: '🏠' },
+  { w: 'Hygiene-Kit', e: '🧼' },
+  { w: 'Baby-Care', e: '🍼' },
+  // Getting there
+  { w: 'Ride', e: '🚗' },
+  { w: 'Fuel', e: '⛽' },
+  { w: 'Breakdown', e: '🛠️' },
+  { w: 'Flat-Tyre', e: '🛞' },
+  { w: 'Jump-Start', e: '🔋' },
+  { w: 'Directions', e: '🧭' },
+  { w: 'Luggage', e: '🧳' },
+  { w: 'Moving', e: '🚚' },
+  // Hands
+  { w: 'Repair', e: '🔧' },
+  { w: 'Plumbing', e: '🚰' },
+  { w: 'Electrical', e: '💡' },
+  { w: 'Carpentry', e: '🪚' },
+  { w: 'Painting', e: '🖌️' },
+  { w: 'Cleanup', e: '🧹' },
+  { w: 'Gardening', e: '🌱' },
+  { w: 'Heavy-Lifting', e: '💪' },
+  { w: 'Tools', e: '🧰' },
+  { w: 'Ladder', e: '🪜' },
+  // Know-how
+  { w: 'Tutoring', e: '📘' },
+  { w: 'Homework', e: '📓' },
+  { w: 'Exam-Prep', e: '📚' },
+  { w: 'Computer-Help', e: '💻' },
+  { w: 'Phone-Help', e: '📱' },
+  { w: 'Internet', e: '📶' },
+  { w: 'Form-Filling', e: '📝' },
+  { w: 'Paperwork', e: '🗂️' },
+  { w: 'Translation', e: '💬' },
+  { w: 'Reading-Help', e: '📖' },
+  { w: 'Job-Advice', e: '💼' },
+  { w: 'Resume-Help', e: '📄' },
+  { w: 'Legal-Advice', e: '⚖️' },
+  { w: 'Printout', e: '🖨️' },
+  // Looking for
+  { w: 'Lost-Pet', e: '🐾' },
+  { w: 'Lost-Item', e: '🔎' },
+  { w: 'Missing-Person', e: '🧍' },
+  { w: 'Search-Party', e: '🔦' },
+  // Animals
+  { w: 'Stray-Animal', e: '🐕' },
+  { w: 'Animal-Rescue', e: '🐈' },
+  { w: 'Bird-Rescue', e: '🕊️' },
+  { w: 'Pet-Care', e: '🐶' },
+  { w: 'Animal-Feed', e: '🥣' },
+  // Company, care & personal safety
+  //
+  // The safety words are deliberately the BEFORE and AFTER of danger — an
+  // accompanied walk, a safe place to wait, a borrowed phone call — never the
+  // danger itself. A map pin is the wrong tool for an emergency in progress:
+  // it waits for passersby, and it publishes a frightened person's exact
+  // location to strangers. Both help notes point at 112 and 1091 instead.
+  { w: 'Elder-Care', e: '🧓' },
+  { w: 'Child-Care', e: '🧒' },
+  { w: 'Friendly-Visit', e: '🤝' },
+  { w: 'Listener', e: '👂' },
+  { w: 'Safe-Walk', e: '🚶' },
+  { w: 'Walk-Home', e: '🚶‍♀️' },
+  { w: 'Safe-Place', e: '🛡️' },
+  { w: 'Phone-Call', e: '📞' },
+  // Things
+  { w: 'Books', e: '📗' },
+  { w: 'School-Supplies', e: '🎒' },
+  { w: 'Stationery', e: '✏️' },
+  { w: 'Furniture', e: '🪑' },
+  { w: 'Toys', e: '🧸' },
+  { w: 'Donations', e: '🎁' },
+  { w: 'Volunteers', e: '🙌' },
+  { w: 'Charging', e: '🔌' },
+  { w: 'Umbrella', e: '☂️' },
+  // When things go wrong
+  { w: 'Flood-Relief', e: '🌊' },
+  { w: 'Relief-Supplies', e: '📦' },
+  { w: 'Rescue', e: '🛟' },
+  { w: 'Sandbags', e: '🧱' },
+];
+
+// Last word: how the ask is phrased.
+//
+// Chosen for what they CANNOT combine into as much as for what they say. The
+// middle slot is always a concrete need, so the pair is read together — which
+// rules out 'Escort' and 'Company' here (and 'Company' as a need), because
+// "Tonight Company Wanted" is a solicitation, not a request for help, and a
+// fixed vocabulary that can spell one out has failed at its only job.
+export const HELP_FORMATS = [
+  'Needed', 'Wanted', 'Request', 'Appeal', 'Help', 'Support',
+  'Assistance', 'Volunteers', 'Donors', 'Drive', 'Search', 'Rescue',
+  'Delivery', 'Pickup', 'Lift', 'Buddy', 'Advice', 'Lessons',
+  'Team', 'Hands',
+];
+
+// One colour for every help pin. Mirrors --sos in css/style.css and is drawn
+// straight onto the share card, so the three must be changed together. Chosen
+// to clear 3:1 against BOTH paper tones (light #faf9f6, dark #1a1917), since
+// it is only ever a ring or an outline, never text.
+export const HELP_COLOR = '#ea580c';
+
+// ============================================================================
+// Kinds, resolved
+// ============================================================================
+
+const TAXONOMIES = {
+  [KIND_EVENT]: { first: VIBES,   main: ACTIVITIES, last: FORMATS,      fallbackEmoji: '📍' },
+  [KIND_HELP]:  { first: URGENCY, main: NEEDS,      last: HELP_FORMATS, fallbackEmoji: '🆘' },
+};
+
+/** Strict: only the kinds this build knows how to render. */
+export const isKind = (k) => k === KIND_EVENT || k === KIND_HELP;
+
+/** For display paths, where an unknown kind must not throw. */
+export const normalizeKind = (k) => (isKind(k) ? k : KIND_EVENT);
+
+/** The three word lists a kind draws its name from. */
+export const taxonomy = (kind) => TAXONOMIES[normalizeKind(kind)];
+
+/** True when {a,b,c} form a valid 2–3 word name for `kind`. */
+export function isValidCombo(kind, a, b, c) {
+  // Deliberately not normalized — an unknown kind is invalid, and isKind's
+  // strict equality also keeps a string '1' from reaching the object lookup
+  // below (where JS key coercion would happily resolve it).
+  if (!isKind(kind)) return false;
+  const t = TAXONOMIES[kind];
+  const aOk = Number.isInteger(a) && a >= -1 && a < t.first.length;
+  const bOk = Number.isInteger(b) && b >= 0 && b < t.main.length;
+  const cOk = Number.isInteger(c) && c >= -1 && c < t.last.length;
   return aOk && bOk && cOk && (a !== -1 || c !== -1);
 }
 
-/** "Evening Cricket Match" (hyphenated words render with spaces). */
-export function sentence(a, b, c) {
+/** "Evening Cricket Match" / "Urgent Blood Needed" (hyphens render as spaces). */
+export function sentence(kind, a, b, c) {
+  const t = taxonomy(kind);
   const parts = [];
-  if (a >= 0) parts.push(VIBES[a]);
-  parts.push(ACTIVITIES[b].w);
-  if (c >= 0) parts.push(FORMATS[c]);
+  if (a >= 0) parts.push(t.first[a]);
+  parts.push(t.main[b].w);
+  if (c >= 0) parts.push(t.last[c]);
   return parts.join(' ').replace(/-/g, ' ');
 }
 
-export function activityEmoji(b) {
-  return ACTIVITIES[b]?.e ?? '📍';
+/** The glyph on the pin: the activity for a plan, the thing needed for a request. */
+export function itemEmoji(kind, b) {
+  const t = taxonomy(kind);
+  return t.main[b]?.e ?? t.fallbackEmoji;
 }
 
-export function activityColor(b) {
+/** The pin's ring: the activity's category for a plan, one shared colour for help. */
+export function itemColor(kind, b) {
+  if (normalizeKind(kind) === KIND_HELP) return HELP_COLOR;
   return CAT_COLORS[ACTIVITIES[b]?.c] ?? '#64748b';
 }

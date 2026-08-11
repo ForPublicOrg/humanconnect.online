@@ -27,6 +27,12 @@
   --cta: #232120;
   --cta-ink: #faf9f6;
   --ring-neutral: #8a8279; /* warm slate for clusters / neutral rings */
+  /* Help requests. --sos is the pin's ring and must stay identical to
+     HELP_COLOR in js/words.js (the share card paints it onto a canvas, where
+     no CSS variable reaches). It clears 3:1 on both papers, which is all a
+     ring needs; --sos-ink is its text-safe twin at 4.5:1. */
+  --sos: #ea580c;
+  --sos-ink: #c2410c;
   --shadow: 0 1px 2px rgba(35, 38, 43, 0.08), 0 10px 28px rgba(35, 38, 43, 0.14);
   --r: 12px;
   --serif: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
@@ -53,6 +59,7 @@
     --cta: #e9e6e0;
     --cta-ink: #1a1917;
     --ring-neutral: #7c756b;
+    --sos-ink: #fb923c;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
   }
 }
@@ -68,8 +75,10 @@
   --cta: #e9e6e0;
   --cta-ink: #1a1917;
   --ring-neutral: #7c756b;
+  --sos-ink: #fb923c;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
+:root[data-theme="light"] { --sos-ink: #c2410c; }
 
 * { box-sizing: border-box; }
 
@@ -329,6 +338,34 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   100% { scale: 1; }
 }
 
+/* A help request. Nine activity categories already own the palette, so colour
+   alone could never say "this one is a plea" — the SHAPE does it: a rounded
+   callout instead of a circle, readable at any zoom and in greyscale. The
+   shared --sos ring, a wash of it across the face, and a slow halo do the
+   rest. Keep the 30% corner in step with CORNER in js/share-card.js, which
+   redraws this pin onto the shared image. */
+.hc-pin.help {
+  border-radius: 30%;
+  background: color-mix(in srgb, var(--ring) 10%, var(--paper));
+}
+.hc-pin.help::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: inherit;
+  border: 2px solid var(--ring);
+  animation: sos 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  pointer-events: none;
+}
+@keyframes sos {
+  0%        { transform: scale(0.88); opacity: 0.55; }
+  70%, 100% { transform: scale(1.12); opacity: 0; }
+}
+/* A map full of pulsing pins is exactly what this setting is for. */
+@media (prefers-reduced-motion: reduce) {
+  .hc-pin.help::before { animation: none; opacity: 0.4; }
+}
+
 /* Cluster bubble: how many plans are in this area */
 .hc-cluster {
   --d: 44px;
@@ -431,6 +468,48 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 }
 
 /* --- create sheet ---------------------------------------------------------*/
+
+/* Plan or plea. Two words, one tap, and the whole sheet re-reads itself. */
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  margin: 2px 0 0;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+.seg-btn {
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn[aria-pressed="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(35, 38, 43, 0.14);
+}
+#kind-help[aria-pressed="true"] { color: var(--sos-ink); }
+
+/* The safety fine print, in both sheets. Quiet, but with the --sos rule down
+   its edge so it belongs to the help side of the product rather than reading
+   as boilerplate. */
+.help-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--sos);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--sos) 8%, transparent);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.help-note strong { color: var(--ink); font-weight: 700; }
+
 #create-preview {
   margin: 0;
   font-family: var(--serif);
@@ -573,6 +652,25 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   background: var(--paper);
   border: 3px solid var(--ring);
   border-radius: 50%;
+}
+/* Same callout silhouette as the pin the user just tapped. */
+#detail-emoji.help {
+  border-radius: 30%;
+  background: color-mix(in srgb, var(--ring) 10%, var(--paper));
+}
+
+.kind-tag {
+  display: inline-block;
+  margin: 0 0 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--sos-ink);
+  background: color-mix(in srgb, var(--sos) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sos) 34%, transparent);
 }
 
 #detail-title {

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>humanconnect — drop a plan on the map, see who joins</title>
-  <meta name="description" content="A morning yoga session, an evening cricket match, a community cleanup — put it on the map, and watch the pin grow as people join. Every event vanishes when its time runs out." />
+  <meta name="description" content="A morning yoga session, an evening cricket match, a community cleanup — put it on the map, and watch the pin grow as people join. Need a hand instead? Drop a help request and people tap I'm coming. Everything vanishes when its time runs out." />
   <meta name="theme-color" content="#047857" />
 
   <!-- Apply the saved theme before first paint (no flash). Allowed by CSP via
@@ -76,7 +76,7 @@
     "name": "humanconnect",
     "alternateName": "humanconnect.online",
     "url": "https://humanconnect.online/",
-    "description": "A live map of real-world meetups across India. Drop a time-bound event on the map — morning yoga, an evening cricket match, a community cleanup — and watch the pin grow as people join. Events vanish when their time runs out.",
+    "description": "A live map of real-world meetups across India. Drop a time-bound event on the map — morning yoga, an evening cricket match, a community cleanup — and watch the pin grow as people join. Or drop a help request — a lift, blood, a ladder, an hour of tutoring — and neighbours tap 'I'm coming'. Everything vanishes when its time runs out.",
     "applicationCategory": "SocialNetworkingApplication",
     "operatingSystem": "Any",
     "browserRequirements": "Requires JavaScript",
@@ -93,7 +93,9 @@
       <p><strong>The live map of real-world meetups across India.</strong>
       Drop a time-bound event on the map — a morning yoga session, an evening
       cricket match, a community cleanup — and watch the pin grow as people
-      tap Join. Events vanish forever when their time runs out.</p>
+      tap Join. Need a hand instead? Drop a help request — a lift, blood, a
+      ladder, an hour of tutoring — and neighbours tap "I'm coming". Everything
+      vanishes forever when its time runs out.</p>
       <p>humanconnect needs JavaScript to draw the map. Please enable it and reload.</p>
     </div>
   </noscript>
@@ -160,7 +162,7 @@
   </div>
 
   <div class="onboard" id="onboard" hidden>
-    <span>Tap the map where you'd meet — pick a few words, set a timer, done.</span>
+    <span>Tap the map to start something — a plan, or a request for help.</span>
     <button id="onboard-close" aria-label="Dismiss">✕</button>
   </div>
 
@@ -178,20 +180,34 @@
       <button class="sheet-close" data-close aria-label="Close">✕</button>
     </div>
     <div class="sheet-body">
-      <p class="field-label">Activity <span class="opt">· required</span></p>
+      <!-- Plan or plea. The two share every mechanic; only the word lists and
+           the language change (see KIND copy in js/config.js). -->
+      <div class="seg" id="kind-switch" role="group" aria-label="What are you putting on the map">
+        <button type="button" class="seg-btn" id="kind-event" aria-pressed="true">Plan something</button>
+        <button type="button" class="seg-btn" id="kind-help" aria-pressed="false">Need help</button>
+      </div>
+      <p class="help-note" id="create-help-note" hidden>
+        <strong>In danger right now? Call 112 — women's helpline 1091.</strong>
+        A pin waits for passersby and shows your location to everyone, so it is
+        no substitute for either. humanconnect is neighbours helping neighbours:
+        ask from a public place, and never share money, documents or OTPs with
+        someone who turns up.
+      </p>
+
+      <p class="field-label"><span id="label-main">Activity</span> <span class="opt" id="opt-main">· required</span></p>
       <input class="search" id="activity-search" type="search" placeholder="Search activities…" autocomplete="off" />
       <div class="chip-grid" id="activity-chips"></div>
 
-      <p class="field-label">Vibe <span class="opt">· optional first word</span></p>
+      <p class="field-label"><span id="label-first">Vibe</span> <span class="opt" id="opt-first">· optional first word</span></p>
       <div class="chip-row" id="vibe-chips"></div>
 
-      <p class="field-label">Format <span class="opt">· optional last word</span></p>
+      <p class="field-label"><span id="label-last">Format</span> <span class="opt" id="opt-last">· optional last word</span></p>
       <div class="chip-row" id="format-chips"></div>
 
       <p class="field-label">Stays on the map for</p>
       <div class="chip-row" id="duration-chips"></div>
 
-      <p class="field-label">Starts <span class="opt">· optional, within that time</span></p>
+      <p class="field-label"><span id="label-start">Starts</span> <span class="opt" id="opt-start">· optional, within that time</span></p>
       <div class="chip-row" id="start-chips"></div>
       <input class="time-input" id="start-at" type="datetime-local" hidden
              aria-label="Exact start time" />
@@ -207,6 +223,7 @@
       <div class="detail-top">
         <div id="detail-emoji" aria-hidden="true">💚</div>
         <div>
+          <p class="kind-tag" id="detail-kind" hidden>Asking for help</p>
           <h2 id="detail-title">Event</h2>
           <div class="detail-meta">
             <span id="detail-joins"></span>
@@ -224,6 +241,11 @@
         <button id="join-btn">Join</button>
         <button class="ghost-btn" id="share-btn" aria-label="Share event">Share</button>
       </div>
+      <p class="help-note" id="detail-help-note" hidden>
+        <strong>Anyone can post here.</strong> Meet in a public place, take
+        someone with you, and never hand over money, documents or OTPs. If
+        someone is in danger right now, call 112 — women's helpline 1091.
+      </p>
       <p class="report">
         <button id="report-btn">Report this event</button>
         <button id="edit-btn" hidden>Edit this event</button>
@@ -236,8 +258,8 @@
   <section class="sheet" id="share-sheet" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Share this event" tabindex="-1" inert>
     <div class="sheet-head">
       <div>
-        <p class="sheet-title">Share this event</p>
-        <p class="sheet-sub">A picture of this event on the map.</p>
+        <p class="sheet-title" id="share-sheet-title">Share this event</p>
+        <p class="sheet-sub" id="share-sheet-sub">A picture of this event on the map.</p>
       </div>
       <button class="sheet-close" data-close aria-label="Close">✕</button>
     </div>
@@ -262,12 +284,13 @@
     <p class="tagline">The live map of real-world meetups</p>
     <p>See something you like? <strong>Tap it and join.</strong> The pin grows as more people join, so good plans become impossible to miss.</p>
     <p>Want to start something? <strong>Tap anywhere on the map</strong>, compose your event from the word list, and give it up to a week. When time runs out, it vanishes forever.</p>
+    <p>Need a hand instead? In the same sheet, switch to <strong>Need help</strong> and put a request on the map — a lift, a ladder, blood, an hour of tutoring. Those pins are square, and people tap <strong>I'm coming</strong>.</p>
     <ul>
       <li>No accounts, no chat, no profiles — just a map.</li>
-      <li>Event names come from a fixed word list, so the map stays friendly.</li>
+      <li>Names come from a fixed word list, so the map stays friendly.</li>
       <li>Joining is anonymous — it simply counts you in.</li>
     </ul>
-    <p class="fine">Events are created by the community. Meet in public places and use your own judgement — HumanConnect only shows the map and takes no responsibility for what happens at events.</p>
+    <p class="fine">Everything here is posted by the community, and anyone can post. Meet in public places, take someone with you, never hand over money or documents, and in a real emergency call 112 (women's helpline 1091). HumanConnect only shows the map and takes no responsibility for what happens at events or requests.</p>
     <button class="cta" id="about-close">Got it</button>
   </dialog>
 

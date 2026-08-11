@@ -11,12 +11,16 @@
 // 7-day ceiling stays anchored at the moment the event was FIRST placed.
 // Editing never restarts the clock — changing "2 days" to "7 days" buys the
 // five days that were left, not seven more.
+//
+// What an edit may NOT touch: the location (the place is the event) and the
+// kind (a plan may not become a help request). Both would rewrite what the
+// people who already joined actually agreed to.
 // ============================================================================
 
 import { handler, fail } from './_lib/http.js';
 import { db, FieldValue, Timestamp } from './_lib/firestore.js';
 import { claimSlot } from './_lib/limits.js';
-import { assertEventId, cleanEventPatch } from './_lib/validate.js';
+import { assertEventId, cleanEventPatch, kindOf } from './_lib/validate.js';
 import { visitorHash, hashOwnerSecret, secretMatches } from './_lib/identity.js';
 import { UPDATE_COOLDOWN_MS, UPDATE_MAX_PER_WINDOW, UPDATE_WINDOW_MS } from './_lib/config.js';
 
@@ -49,6 +53,16 @@ export default handler(async (req, body) => {
     }
 
     const ev = evSnap.data();
+
+    // The kind is not editable, and this is where that is enforced. The words
+    // were validated against the kind the CALLER sent; if that isn't the kind
+    // the document actually is, those indices mean something else entirely —
+    // and a plan turning into a help request (or back) under the people who
+    // already joined it would be a lie of the same sort as moving the pin.
+    if (kindOf(ev.k) !== patch.kind) {
+      throw fail(409, 'kind_mismatch', 'A plan cannot become a request, or the other way round.');
+    }
+
     const createdAt = ev.created?.toMillis?.();
     // Every event /api/create ever wrote has this stamp; its absence means
     // something predating the API, which also has no secret to get here with.

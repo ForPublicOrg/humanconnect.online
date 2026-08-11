@@ -14,9 +14,11 @@ rules_version = '2';
 //
 // Now every mutation goes through /api/* (Vercel), which:
 //   - verifies a Cloudflare Turnstile token, so automation has to pay per write
-//   - validates {a,b,c} against the same js/words.js the UI uses, so free text
-//     still cannot enter the database (see api/_lib/validate.js — that file is
-//     now where the legal-safety model lives)
+//   - validates {a,b,c} — against the word lists for the pin's kind `k`, since
+//     a plan and a help request index into different ones — using the same
+//     js/words.js the UI uses, so free text still cannot enter the database
+//     (see api/_lib/validate.js — that file is now where the legal-safety
+//     model lives)
 //   - rate-limits on a server-derived identity a page cannot rewrite
 // and writes with a service account, which bypasses these rules entirely.
 //
