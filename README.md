@@ -108,19 +108,39 @@ single nationwide number.
 **Some countries have no single number, and the note says so.** South Korea
 splits police (112) from fire/rescue/ambulance (119); printing one digit-string
 there could send someone who is bleeding to a police dispatcher, so both are
-shown and labelled: *"call 112 for police, 119 for fire or ambulance."* Only
-genuine splits get this — a country with a working unified line stays a bare
-number, because a frightened reader should not have to parse a menu.
+shown: *"call 112 for police, 119 for fire or an ambulance."* Only genuine
+splits get this — a country with a working unified line stays a bare number,
+because a frightened reader should not have to parse a menu.
+
+**The label on that second number is data, not a template.** Most split
+countries run three services, so it is the *ambulance* and fire is a third line
+we don't show; only a minority (Korea, Japan, Taiwan, Singapore, Jamaica…)
+genuinely combine the two. A draft that hardcoded "fire or ambulance" would
+have told someone in the Comoros to summon an ambulance on 113 — the fire line,
+in a country with no ambulance dispatch at all. Each entry declares what its
+number actually reaches, and an entry whose service can't be established is
+omitted rather than guessed.
 
 Korea is also why the coverage check is now **mechanical rather than
 remembered**. It was missing from the table entirely and inherited the 112
 default, which happens to be its police number — a wrong answer that looked
-right. The gap is found by subtracting the zones the module maps from
-`Intl.supportedValuesOf('timeZone')`: whatever remains is exactly the set of
-visitors being served the default, and every one of those countries has been
-checked and either confirmed as genuinely-112 or given an override. Do that
-subtraction again after any edit; a country nobody thought to check is the one
-failure mode this design has.
+right, invisible until a Korean said otherwise. The gap is found by subtracting
+the zones the module maps from `Intl.supportedValuesOf('timeZone')`: whatever
+remains is exactly the set of visitors being served the default. Every one of
+those has been checked and confirmed genuinely-112. **Re-run that subtraction
+after any edit** — a country nobody thought to check is the only failure mode
+this design has.
+
+That sweep found real traps beyond Korea: in Gabon, dialling 112 from a mobile
+reaches the *fire brigade*, not police; in São Tomé, 112 is the fire line; in
+Northern Cyprus it is the ambulance; and in Somalia the familiar 999 is the
+ambulance while police is 888. It also removed overrides that shouldn't have
+existed — Ukraine, Uzbekistan and Mauritius all have a working unified 112, so
+the table now means exactly one thing: *the default is wrong or incomplete
+here.* Countries knowingly left on the default because no authority publishes a
+dialable number — North Korea, Syria, Equatorial Guinea, Republic of the Congo,
+South Sudan, Tokelau, the uninhabited US Minor Outlying Islands — are listed in
+the module header so the next audit doesn't re-derive the same dead ends.
 
 ## Run it right now (demo mode)
 
