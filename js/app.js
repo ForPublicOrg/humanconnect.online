@@ -4,7 +4,7 @@
 
 import {
   KIND_EVENT, KIND_HELP, taxonomy,
-  sentence, itemEmoji, itemColor, isValidCombo,
+  sentence, itemEmoji, itemColor, isValidCombo, isRetiredWord,
 } from './words.js?v=msmfhh75';
 import {
   DURATIONS, START_PRESETS, DEFAULT_VIEW, CREATE_COOLDOWN_MS, REPORT_EMAIL, kindCopy,
@@ -655,7 +655,15 @@ function renderActivityGrid(filter) {
   box.replaceChildren();
   const f = filter.trim().toLowerCase();
   taxonomy(draft.kind).main.forEach((act, i) => {
-    if (f && !act.w.toLowerCase().includes(f)) return;
+    // Retired words aren't offered — where a typed variant exists, the type
+    // is required (api/_lib/validate.js refuses these on create). The one
+    // exception: while EDITING a pin that already wears the word, its chip
+    // stays visible so the current selection isn't an invisible mystery.
+    if (act.r && draft.b !== i) return;
+    // Match the stored spelling and the rendered one, so "table tennis" and
+    // "o positive" both find their hyphenated words.
+    const w = act.w.toLowerCase();
+    if (f && !w.includes(f) && !w.replace(/-/g, ' ').includes(f)) return;
     const chip = el('button', 'chip act');
     chip.type = 'button';
     chip.append(el('span', 'em', act.e), document.createTextNode(' ' + act.w.replace(/-/g, ' ')));

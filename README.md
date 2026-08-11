@@ -39,11 +39,22 @@ different labels, a different button. Nothing else about the pin changes.
 | Stored as | no `k` field | `k: 1` |
 | Name is | `[vibe?] [activity] [format?]` | `[urgency?] [need] [wording?]` |
 | Word lists | `VIBES` / `ACTIVITIES` / `FORMATS` | `URGENCY` / `NEEDS` / `HELP_FORMATS` |
-| Reads as | "Evening Cricket Match" | "Urgent Blood Needed" |
+| Reads as | "Evening Cricket Match" | "Urgent O Positive Blood Needed" |
 | Pin | circle, category colour | rounded callout, one shared `--sos` colour, slow halo |
 | Button | Join → "You're in ✓" | I'm coming → "You're coming ✓" |
 
-Three decisions worth knowing about:
+Four decisions worth knowing about:
+
+- **A required detail is required.** Where the missing detail decides *who*
+  can help, the vocabulary carries typed variants and the generic word is
+  **retired** (`r: true` in [js/words.js](js/words.js)): blood is asked for by
+  group (`O-Positive-Blood` … `AB-Negative-Blood`, plus `Plasma`/`Platelets`),
+  fuel as `Petrol` or `Diesel`. A retired word stays a valid index forever —
+  existing pins keep their name, and an owner editing one isn't locked out —
+  but the composer no longer offers it and `/api/create` refuses it. Details
+  any willing helper can absorb on arrival (which medicine, where the ride
+  goes) stay generic on purpose: the pin's job is to get a helper there, and
+  free text is never an option.
 
 - **Shape carries it, not colour.** Nine activity categories already own the
   palette, so a tenth set of meanings for the same hues would make the map

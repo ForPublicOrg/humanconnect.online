@@ -7,7 +7,7 @@
 // KIND of pin (`k`) that says which word lists those indices point into:
 //
 //   kind 0 — a plan:  [vibe?]    + [activity] + [format?]  →  "Evening Cricket Match"
-//   kind 1 — a help request: [urgency?] + [need] + [wording?] → "Urgent Blood Needed"
+//   kind 1 — a help request: [urgency?] + [need] + [wording?] → "Urgent O Positive Blood Needed"
 //
 // api/_lib/validate.js imports this file, so the API and the UI can never
 // disagree about which indices exist. Arbitrary text cannot enter the database
@@ -15,6 +15,9 @@
 //
 // Only APPEND new words to any list — never reorder or delete, or existing
 // pins would silently change meaning. The same goes for the kind numbers.
+// A word that turns out to be wrong is RETIRED instead (`r: true`): its index
+// stays valid forever so existing pins keep their name, but the composer stops
+// offering it and /api/create refuses it — see isRetiredWord().
 // ============================================================================
 
 // The kinds. `k` is absent on every event written before help requests
@@ -170,7 +173,15 @@ export const URGENCY = [
 // callout instead of a circle — see .hc-pin.help), the emoji says what for.
 export const NEEDS = [
   // Medical
-  { w: 'Blood', e: '🩸' },
+  //
+  // 'Blood' is RETIRED (r) in favour of the typed groups at the end of this
+  // list: the group decides WHO can donate, so an untyped appeal brings people
+  // who cannot help. That is the rule for retiring a generic in favour of
+  // typed variants — the missing detail filters who should come (blood group,
+  // fuel type). A detail any willing helper can absorb on arrival (which
+  // medicine, where the ride goes) stays generic: the pin's job is to get a
+  // helper there, and free text is never an option.
+  { w: 'Blood', e: '🩸', r: true },
   { w: 'Medicine', e: '💊' },
   { w: 'First-Aid', e: '🩹' },
   { w: 'Medical-Help', e: '🚑' },
@@ -189,7 +200,8 @@ export const NEEDS = [
   { w: 'Baby-Care', e: '🍼' },
   // Getting there
   { w: 'Ride', e: '🚗' },
-  { w: 'Fuel', e: '⛽' },
+  // Retired like 'Blood': petrol in a diesel tank is worse than no help.
+  { w: 'Fuel', e: '⛽', r: true },
   { w: 'Breakdown', e: '🛠️' },
   { w: 'Flat-Tyre', e: '🛞' },
   { w: 'Jump-Start', e: '🔋' },
@@ -263,6 +275,28 @@ export const NEEDS = [
   { w: 'Relief-Supplies', e: '📦' },
   { w: 'Rescue', e: '🛟' },
   { w: 'Sandbags', e: '🧱' },
+  // Typed variants — APPENDED here, not slotted beside their generic word,
+  // because stored indices make every list append-only. They exist where the
+  // type IS the request: a B− donor cannot answer an A+ appeal, and petrol in
+  // a diesel tank is worse than no help at all — which is also why their
+  // generics above are retired, not merely accompanied. Worded type-first
+  // ("O Positive Blood") so the title reads like the appeal it is:
+  // "Emergency O Negative Blood Donors".
+  { w: 'A-Positive-Blood', e: '🩸' },
+  { w: 'A-Negative-Blood', e: '🩸' },
+  { w: 'B-Positive-Blood', e: '🩸' },
+  { w: 'B-Negative-Blood', e: '🩸' },
+  { w: 'O-Positive-Blood', e: '🩸' },
+  { w: 'O-Negative-Blood', e: '🩸' },
+  { w: 'AB-Positive-Blood', e: '🩸' },
+  { w: 'AB-Negative-Blood', e: '🩸' },
+  { w: 'Plasma', e: '💉' },
+  { w: 'Platelets', e: '🩸' },
+  { w: 'Petrol', e: '⛽' },
+  { w: 'Diesel', e: '⛽' },
+  { w: 'Math-Tutoring', e: '➗' },
+  { w: 'English-Tutoring', e: '🔤' },
+  { w: 'Science-Tutoring', e: '🔬' },
 ];
 
 // Last word: how the ask is phrased.
@@ -324,6 +358,17 @@ export function sentence(kind, a, b, c) {
   parts.push(t.main[b].w);
   if (c >= 0) parts.push(t.last[c]);
   return parts.join(' ').replace(/-/g, ' ');
+}
+
+/**
+ * True when the main word is retired: still a real index — existing pins keep
+ * rendering, an edit may keep it — but barred from NEW pins, by the composer
+ * (which no longer offers the chip) and by /api/create (which refuses it).
+ * Retirement is for generics whose typed variants are REQUIRED to act — an
+ * untyped 'Blood' appeal brings donors of the wrong group.
+ */
+export function isRetiredWord(kind, b) {
+  return !!taxonomy(kind).main[b]?.r;
 }
 
 /** The glyph on the pin: the activity for a plan, the thing needed for a request. */

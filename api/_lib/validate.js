@@ -11,7 +11,7 @@
 // rules could — and that now covers the help-request lists too.
 // ============================================================================
 
-import { isValidCombo, isKind, KIND_EVENT } from '../../js/words.js';
+import { isValidCombo, isKind, isRetiredWord, KIND_EVENT } from '../../js/words.js';
 import { geohash4 } from '../../js/geo.js';
 import { fail } from './http.js';
 import { MAX_EVENT_MS, MIN_EVENT_MS } from './config.js';
@@ -67,6 +67,15 @@ function cleanWordsAndStay(body) {
 export function cleanEvent(body) {
   const fields = cleanWordsAndStay(body);
   const { durationMs } = fields;
+
+  // NEW pins may not use a retired word — where a typed variant exists, the
+  // type is required, because it decides who can help (blood group, fuel).
+  // Only here, not in cleanEventPatch: an EDIT of a pin that legitimately
+  // carries the retired word re-sends it, and saving a new stay must not be
+  // refused over a word the pin already wears.
+  if (isRetiredWord(fields.kind, fields.b)) {
+    throw fail(400, 'bad_words', 'That one needs the exact type — pick it from the list.');
+  }
 
   const lat = num(body.lat);
   const lng = num(body.lng);

@@ -508,7 +508,7 @@ function seedEvents(center) {
     mk(E, -0.013, -0.007, -1, 30, 0,  3, 20 * h),              // Coffee Meetup — starts now
     mk(E,  0.016, -0.003, 5, 55, 18, 0, 4 * 24 * h, 2 * 24 * h), // Weekend Photography Walkathon
     mk(E, -0.002,  0.017, 4, 82, -1, 21, 30 * h, 6 * h),       // Night Gaming
-    mk(S,  0.006, -0.004, 0,  0,  0,  4, 12 * h),              // Urgent Blood Needed
+    mk(S,  0.006, -0.004, 0, 82,  0,  4, 12 * h),              // Urgent O Positive Blood Needed
     mk(S, -0.011,  0.013, 10, 19, 4,  0, 3 * h),               // Roadside Flat Tyre Help
   ];
 }
