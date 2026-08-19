@@ -125,12 +125,6 @@
           <path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5z" />
         </svg>
       </button>
-      <button class="icon-btn" id="locate-btn" aria-label="Go to my location" title="My location">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-        </svg>
-      </button>
       <button class="icon-btn" id="about-btn" aria-label="About humanconnect" title="About">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="12" cy="12" r="9" />
@@ -149,9 +143,21 @@
     <ul id="search-results" role="listbox" aria-label="Search results" hidden></ul>
   </div>
 
-  <button class="fab" id="fab" aria-label="Start a new event">
-    <span class="plus" aria-hidden="true">＋</span><span class="label">Start something</span>
-  </button>
+  <!-- The two things you do to the map itself, in the corner your thumb lives in.
+       Locate sits above Start: same edge, clearly the quieter of the two. -->
+  <div class="corner-stack">
+    <button class="map-btn" id="locate-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+      </svg>
+      <span>My location</span>
+    </button>
+
+    <button class="fab" id="fab" aria-label="Start a new event">
+      <span class="plus" aria-hidden="true">＋</span><span class="label">Start something</span>
+    </button>
+  </div>
 
   <div class="banner banner-warn" id="offline-banner" role="status" hidden>
     <span>You're offline — the map may be out of date.</span>

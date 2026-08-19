@@ -1308,7 +1308,7 @@ $('#report-btn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Header controls
+// Corner controls
 // ---------------------------------------------------------------------------
 let meDot = null;
 $('#locate-btn').addEventListener('click', () => {
@@ -1327,6 +1327,9 @@ $('#locate-btn').addEventListener('click', () => {
   );
 });
 
+// ---------------------------------------------------------------------------
+// Header controls
+// ---------------------------------------------------------------------------
 // Theme toggle — button icon swaps via CSS; keep the label in sync for a11y.
 const themeBtn = $('#theme-btn');
 const syncThemeLabel = (t) => {

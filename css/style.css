@@ -222,13 +222,13 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 :root[data-theme="dark"] #theme-btn .ic-sun { display: none; }
 :root[data-theme="dark"] #theme-btn .ic-moon { display: block; }
 
-/* Narrow screens. Measured: the brand pill wants ~363px and the four controls
-   194px, so one row needs ~589px of viewport. Below that they cannot share a
-   row without either shrinking the wordmark to ~11px or pushing controls
-   off-screen — which is exactly what used to happen (theme, my-location and
-   about were unreachable on every common phone). So wrap instead: pill on the
-   first row, controls right-aligned on the second. Nothing hidden, nothing
-   truncated, 44px touch targets intact. */
+/* Narrow screens. Measured: the brand pill wants ~363px and the controls 44px
+   each, so the row cannot always be shared — it used to push theme, my-location
+   and about off-screen entirely on every common phone. So wrap instead: pill on
+   the first row, controls right-aligned on the second. Nothing hidden, nothing
+   truncated, 44px touch targets intact. My location now lives in the corner
+   stack, so three remain here and the row fits more often; the reserve below
+   still covers the case where it does wrap. */
 @media (max-width: 600px) {
   :root { --chrome-top: 122px; } /* two rows measure 107px; plus a little air */
   .header { flex-wrap: wrap; }
@@ -241,10 +241,6 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
    Start button
 --------------------------------------------------------------------------- */
 .fab {
-  position: fixed;
-  right: 16px;
-  bottom: calc(20px + env(safe-area-inset-bottom));
-  z-index: 1000;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -265,6 +261,55 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
   color: #fff;
   font-weight: 400;
 }
+
+/* ---------------------------------------------------------------------------
+   Corner stack — map controls, bottom right
+--------------------------------------------------------------------------- */
+.corner-stack {
+  position: fixed;
+  right: 16px;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  /* Same trick as the masthead: the gap between the two buttons must not become
+     a strip of map you cannot drag. */
+  pointer-events: none;
+}
+.corner-stack > button { pointer-events: auto; }
+
+/* My location. It sat in the masthead as a bare crosshair and nobody read it as
+   anything; here it is where every map puts it, and it says what it does. Paper
+   against the emerald start button, so the hierarchy stays obvious. */
+.map-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 15px 10px 13px;
+  border-radius: var(--r);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: transform 0.15s ease;
+}
+.map-btn:active { transform: scale(0.95); }
+.map-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke: var(--accent-deep);
+  fill: none;
+  flex: 0 0 auto;
+}
+/* The crosshair's centre dot is painted with currentColor, which is the label's
+   ink — override it so the whole mark reads as one emerald glyph. */
+.map-btn svg [fill] { fill: var(--accent-deep); }
 
 /* ---------------------------------------------------------------------------
    Map pins — circle face, category ring, cartographic stem
@@ -987,7 +1032,8 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; background: 
 
 .onboard {
   position: fixed;
-  bottom: calc(92px + env(safe-area-inset-bottom));
+  /* Clears the corner stack (start button + my location) at every width. */
+  bottom: calc(148px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
